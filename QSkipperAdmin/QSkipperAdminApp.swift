@@ -12,6 +12,7 @@ struct QSkipperAdminApp: App {
     // Create services that will be shared across the app
     @StateObject private var authService = AuthService()
     @StateObject private var dataController = DataController.shared
+    @StateObject private var productService = ProductService()
     
     init() {
         // Configure logging
@@ -50,6 +51,7 @@ struct QSkipperAdminApp: App {
             ContentView()
                 .environmentObject(authService)
                 .environmentObject(dataController)
+                .environmentObject(productService)
                 // Improve padding on iPad
                 .modifier(DeviceAdaptiveModifier())
         }

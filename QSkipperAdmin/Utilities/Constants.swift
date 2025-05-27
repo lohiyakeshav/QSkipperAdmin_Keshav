@@ -9,11 +9,13 @@ struct AppColors {
     static let mediumGray = Color(uiColor: UIColor(hex: "#999999") ?? .systemGray)
     static let errorRed = Color(uiColor: UIColor(hex: "#FF3B30") ?? .systemRed)
     static let backgroundWhite = Color.white
+    static let background = Color(uiColor: UIColor(hex: "#F9F9F9") ?? .systemBackground)
 }
 
 // MARK: - App Fonts
 struct AppFonts {
     static let title = Font.system(size: 24, weight: .bold)
+    static let subtitle = Font.system(size: 18, weight: .semibold)
     static let sectionTitle = Font.system(size: 18, weight: .bold)
     static let body = Font.system(size: 16, weight: .regular)
     static let caption = Font.system(size: 14, weight: .regular)

@@ -1,0 +1,39 @@
+/* 
+  Localizable.strings
+  QSkipperAdmin
+
+  Created for localization
+*/
+
+// Common strings
+"cancel" = "Cancel";
+"done" = "Done";
+"edit" = "Edit";
+"save" = "Save";
+"delete" = "Delete";
+"loading" = "Loading...";
+"error" = "Error";
+"success" = "Success";
+"back" = "Back";
+"continue" = "Continue";
+"retry" = "Retry";
+"warning" = "Warning";
+"confirm" = "Confirm";
+"yes" = "Yes";
+"no" = "No";
+
+// Image picker related
+"select_image" = "Select Image";
+"photo_library" = "Photo Library";
+"camera" = "Camera";
+"choose_photo" = "Choose Photo";
+"take_photo" = "Take Photo";
+"select_photo_source" = "Select Photo Source";
+
+// Placeholder strings for UIKit components
+"CANCEL" = "Cancel";
+"DONE" = "Done";
+"RETAKE" = "Retake";
+"EDIT" = "Edit";
+"LIBRARY" = "Library";
+"CAMERA" = "Camera"; 

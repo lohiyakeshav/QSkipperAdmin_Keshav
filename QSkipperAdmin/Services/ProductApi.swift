@@ -4,6 +4,12 @@ import Combine
 import CommonCrypto
 import CoreGraphics
 
+// Define a notification name for product updates
+extension Notification.Name {
+    static let productUpdated = Notification.Name("ProductUpdated")
+    static let productImageCacheCleared = Notification.Name("ProductImageCacheCleared")
+}
+
 class ProductApi {
     static let shared = ProductApi()
     
@@ -103,6 +109,37 @@ class ProductApi {
             DebugLogger.shared.log("Image cache cleared", category: .cache)
         } catch {
             DebugLogger.shared.log("Failed to clear disk cache: \(error.localizedDescription)", category: .error)
+        }
+    }
+    
+    /// Remove a specific product image from cache
+    /// - Parameter productId: The ID of the product whose image should be removed from cache
+    func clearProductImageCache(productId: String) {
+        // Create the URL string that would be used as the cache key
+        let imageUrl = "\(NetworkManager.baseURL)/get_product_photo/\(productId)"
+        let safeKey = imageUrl.md5
+        
+        // Remove from memory cache
+        imageCache.removeObject(forKey: safeKey as NSString)
+        
+        // Remove from disk cache
+        let imagePath = cacheDirectory.appendingPathComponent(safeKey).path
+        if fileManager.fileExists(atPath: imagePath) {
+            do {
+                try fileManager.removeItem(atPath: imagePath)
+                DebugLogger.shared.log("Image removed from disk cache for product ID: \(productId)", category: .cache)
+            } catch {
+                DebugLogger.shared.log("Failed to remove image from disk cache: \(error.localizedDescription)", category: .error)
+            }
+        }
+        
+        // Post notification that image cache was cleared for this product
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .productImageCacheCleared,
+                object: nil,
+                userInfo: ["productId": productId]
+            )
         }
     }
     
@@ -660,26 +697,182 @@ class ProductApi {
         }
     }
     
-    /// Delete a product
+    /// Delete a product by ID
     /// - Parameter productId: The product ID to delete
     /// - Returns: Success boolean
     func deleteProduct(productId: String) async throws -> Bool {
-        guard let url = URL(string: "\(NetworkManager.baseURL)/products/\(productId)") else {
+        guard let url = URL(string: "\(NetworkManager.baseURL)/delete-product/\(productId)") else {
             throw NSError(domain: "ProductApi", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         
+        // Add auth token if available
+        if let token = AuthService.shared.getToken() {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        DebugLogger.shared.log("Deleting product with ID: \(productId)", category: .network)
+        DebugLogger.shared.log("DELETE request to: \(url.absoluteString)", category: .network)
+        
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
+            if let responseString = String(data: data, encoding: .utf8) {
+                DebugLogger.shared.log("Delete product failed: \(responseString)", category: .error)
+            }
             throw NSError(domain: "ProductApi", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to delete product"])
+        }
+        
+        // Try to parse response
+        if let responseString = String(data: data, encoding: .utf8) {
+            DebugLogger.shared.log("Delete product response: \(responseString)", category: .network)
         }
         
         let deleteResponse = try JSONDecoder().decode(DeleteProductResponse.self, from: data)
         return deleteResponse.success
+    }
+    
+    /// Update a product with form data (for multipart/form-data)
+    /// - Parameters:
+    ///   - product: The product to update
+    ///   - image: Optional product image
+    /// - Returns: Updated product
+    func updateProduct(productId: String, product: Product, image: UIImage? = nil) async throws -> Product {
+        guard let url = URL(string: "\(NetworkManager.baseURL)/update-food/\(productId)") else {
+            throw NSError(domain: "ProductApi", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 60 // Increase timeout to 60 seconds
+        
+        // Add auth token if available
+        if let token = AuthService.shared.getToken() {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        // Create boundary string for multipart form data
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        // Create form data
+        var formData = Data()
+        
+        // Get the correct restaurant ID
+        let restaurantId: String
+        
+        // First try to get from UserDefaults which should have the most accurate restaurant ID
+        if let storedRestaurantId = UserDefaults.standard.string(forKey: "restaurant_id"), !storedRestaurantId.isEmpty {
+            restaurantId = storedRestaurantId
+            DebugLogger.shared.log("Using restaurant ID from UserDefaults for update: \(restaurantId)", category: .network)
+        }
+        // If not in UserDefaults, use the provided product's restaurant ID
+        else if !product.restaurantId.isEmpty {
+            restaurantId = product.restaurantId
+            DebugLogger.shared.log("Using product's restaurant ID for update: \(restaurantId)", category: .network)
+        }
+        // If still not found, try DataController
+        else if !DataController.shared.restaurant.id.isEmpty {
+            restaurantId = DataController.shared.restaurant.id
+            DebugLogger.shared.log("Using DataController restaurant ID for update: \(restaurantId)", category: .network)
+        }
+        // Last resort, use the user ID
+        else if let userId = AuthService.shared.getUserId() {
+            restaurantId = userId
+            DebugLogger.shared.log("Using user ID as fallback for restaurant ID in update: \(restaurantId)", category: .network)
+        }
+        else {
+            throw NSError(domain: "ProductApi", code: 0, userInfo: [NSLocalizedDescriptionKey: "No restaurant ID available to update product"])
+        }
+        
+        // Add text fields
+        let textFields: [String: String] = [
+            "product_name": product.name,
+            "product_price": "\(product.price)",
+            "food_category": product.category,
+            "restaurant_id": restaurantId,
+            "description": product.description,
+            "extraTime": "\(product.extraTime)",
+            "featured_Item": product.isFeatured ? "true" : "false"
+        ]
+        
+        // Log the fields being sent (for debugging)
+        DebugLogger.shared.log("Updating product \(productId) with restaurant ID: \(restaurantId)", category: .network)
+        
+        for (key, value) in textFields {
+            formData.append("--\(boundary)\r\n".data(using: .utf8)!)
+            formData.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
+            formData.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        
+        // Add image if available - with compression like in createProduct
+        if let image = image {
+            if let imageData = compressImageToTinySize(image: image) {
+                // Use the compressed image data
+                formData.append("--\(boundary)\r\n".data(using: .utf8)!)
+                formData.append("Content-Disposition: form-data; name=\"product_photo64Image\"; filename=\"image.jpg\"\r\n".data(using: .utf8)!)
+                formData.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+                formData.append(imageData)
+                formData.append("\r\n".data(using: .utf8)!)
+                
+                DebugLogger.shared.log("Adding compressed image to update request, size: \(imageData.count / 1024) KB", category: .network)
+            } else {
+                // Fallback to standard compression if our method fails
+                if let standardData = image.jpegData(compressionQuality: 0.5) {
+                    formData.append("--\(boundary)\r\n".data(using: .utf8)!)
+                    formData.append("Content-Disposition: form-data; name=\"product_photo64Image\"; filename=\"image.jpg\"\r\n".data(using: .utf8)!)
+                    formData.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+                    formData.append(standardData)
+                    formData.append("\r\n".data(using: .utf8)!)
+                    
+                    DebugLogger.shared.log("Adding standard compressed image to update request, size: \(standardData.count / 1024) KB", category: .network)
+                }
+            }
+        }
+        
+        // Add final boundary
+        formData.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        // Set the request body
+        request.httpBody = formData
+        
+        DebugLogger.shared.log("Updating product with ID: \(productId)", category: .network)
+        DebugLogger.shared.log("PUT request to: \(url.absoluteString)", category: .network)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 else {
+            if let responseString = String(data: data, encoding: .utf8) {
+                DebugLogger.shared.log("Update product failed: \(responseString)", category: .error)
+            }
+            throw NSError(domain: "ProductApi", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to update product"])
+        }
+        
+        // Log response
+        if let responseString = String(data: data, encoding: .utf8) {
+            DebugLogger.shared.log("Update product response: \(responseString)", category: .network)
+        }
+        
+        // Create an updated product to return
+        var updatedProduct = product
+        updatedProduct.restaurantId = restaurantId
+        updatedProduct.productPhoto = image // Set the updated image
+        
+        // Post notification that product was updated
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .productUpdated,
+                object: nil,
+                userInfo: ["productId": productId, "imageUpdated": image != nil]
+            )
+        }
+        
+        // Return the updated product
+        return updatedProduct
     }
     
     // MARK: - Get All Products Methods 
@@ -689,6 +882,81 @@ class ProductApi {
     /// - Returns: Array of products
     func getAllProduct() async throws -> [Product] {
         return try await getAllProducts()
+    }
+    
+    /// Get a single product by ID
+    /// - Parameter productId: The ID of the product to fetch
+    /// - Returns: The product if found, nil otherwise
+    func getProduct(productId: String) async throws -> Product? {
+        guard !productId.isEmpty else {
+            DebugLogger.shared.log("Cannot fetch product with empty ID", category: .error)
+            return nil
+        }
+        
+        let productUrl = baseUrl.appendingPathComponent("get-product/\(productId)")
+        var request = URLRequest(url: productUrl)
+        
+        // Add auth token if available
+        if let token = AuthService.shared.getToken() {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        DebugLogger.shared.log("Fetching product with ID: \(productId)", category: .network)
+        DebugLogger.shared.log("GET request to: \(productUrl.absoluteString)", category: .network)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                DebugLogger.shared.log("Invalid response type", category: .error)
+                return nil
+            }
+            
+            // Check if we got a successful response
+            if httpResponse.statusCode != 200 {
+                if let responseString = String(data: data, encoding: .utf8) {
+                    DebugLogger.shared.log("Failed to fetch product: \(responseString)", category: .error)
+                }
+                return nil
+            }
+            
+            // Try to decode the product
+            do {
+                // First try to decode as a ProductResponse which might contain the product
+                let productResponse = try JSONDecoder().decode(ProductResponse.self, from: data)
+                if let product = productResponse.product {
+                    DebugLogger.shared.log("Successfully decoded product: \(product.name)", category: .network)
+                    return product
+                } else if let products = productResponse.products, let firstProduct = products.first {
+                    // Some APIs might return an array with a single product
+                    DebugLogger.shared.log("Successfully decoded product from array: \(firstProduct.name)", category: .network)
+                    return firstProduct
+                }
+                
+                // If we have a success message but no product, log it
+                if let message = productResponse.message {
+                    DebugLogger.shared.log("API message: \(message)", category: .network)
+                }
+                
+                // Try to decode directly as a Product
+                let product = try JSONDecoder().decode(Product.self, from: data)
+                DebugLogger.shared.log("Successfully decoded single product: \(product.name)", category: .network)
+                return product
+                
+            } catch {
+                DebugLogger.shared.log("Failed to decode product: \(error.localizedDescription)", category: .error)
+                
+                // Try to log the response for debugging
+                if let responseString = String(data: data, encoding: .utf8) {
+                    DebugLogger.shared.log("Response data: \(responseString)", category: .network)
+                }
+                
+                return nil
+            }
+        } catch {
+            DebugLogger.shared.log("Network error: \(error.localizedDescription)", category: .error)
+            throw error
+        }
     }
     
     /// This method uses whatever ID is provided - for testing only

@@ -4,6 +4,26 @@ import PhotosUI
 // Import the UIKitImagePicker
 import UIKit
 
+// Alert types enum
+enum AlertType: Equatable {
+    case message(String)
+    case deleteConfirmation
+    case none
+    
+    static func == (lhs: AlertType, rhs: AlertType) -> Bool {
+        switch (lhs, rhs) {
+        case (.none, .none):
+            return true
+        case (.deleteConfirmation, .deleteConfirmation):
+            return true
+        case (.message(let lhsMsg), .message(let rhsMsg)):
+            return lhsMsg == rhsMsg
+        default:
+            return false
+        }
+    }
+}
+
 struct RestaurantManagementView: View {
     // Environment
     @EnvironmentObject private var dataController: DataController
@@ -29,7 +49,7 @@ struct RestaurantManagementView: View {
     
     // UI state
     @State private var isSubmitting = false
-    @State private var showAlert = false
+    @State private var alertType: AlertType = .none
     @State private var alertMessage = ""
     @State private var currentImageSelection: ImageSelectionType = .restaurant
     @State private var selectedTab: SidebarTab = .profile
@@ -61,13 +81,40 @@ struct RestaurantManagementView: View {
         .sheet(isPresented: $isImagePickerShown) {
             UIKitImagePicker(selectedImage: $restaurantImage)
         }
-        .alert(isPresented: $showAlert) {
-            Alert(
-                title: Text("Message"),
-                message: Text(alertMessage),
-                dismissButton: .default(Text("OK"))
-            )
-        }
+        // Handle delete confirmation alert
+        .alert("Delete Restaurant", isPresented: Binding<Bool>(
+            get: { alertType == .deleteConfirmation },
+            set: { if !$0 { alertType = .none } }
+        ), actions: {
+            Button("Cancel", role: .cancel) {
+                alertType = .none
+            }
+            Button("Yes, Delete Restaurant", role: .destructive) {
+                print("Delete confirmed")
+                deleteRestaurant()
+            }
+        }, message: {
+            Text("Are you sure you want to delete this restaurant? This action CANNOT be undone and will permanently remove all associated products and orders. Your account will remain but you'll need to register a new restaurant.")
+        })
+        // Handle message alerts
+        .alert("Message", isPresented: Binding<Bool>(
+            get: { 
+                if case .message(_) = alertType {
+                    return true
+                }
+                return false
+            },
+            set: { if !$0 { alertType = .none } }
+        ), actions: {
+            Button("OK", role: .cancel) {
+                alertType = .none
+            }
+        }, message: {
+            if case .message(let message) = alertType {
+                return Text(message)
+            }
+            return Text("")
+        })
         .onAppear {
             loadRestaurantData()
             checkRegistrationStatus()
@@ -101,113 +148,155 @@ struct RestaurantManagementView: View {
     
     // MARK: - Restaurant Profile Section
     private var restaurantProfileSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 15) {
-                // Restaurant name
-                VStack(alignment: .leading) {
-                    Text("Restaurant Name")
-                        .font(.headline)
-                    TextField("Enter restaurant name", text: $restaurantName)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                }
-                
-                // Estimated time
-                VStack(alignment: .leading) {
-                    Text("Estimated Time (minutes)")
-                        .font(.headline)
-                    TextField("30", text: $estimatedTime)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.numberPad)
-                }
-                
-                // Cuisine selection
-                VStack(alignment: .leading) {
-                    Text("Cuisine")
-                        .font(.headline)
-                    
-                    Picker("Select cuisine", selection: $selectedCuisine) {
-                        ForEach(cuisineTypes, id: \.self) { cuisine in
-                            Text(cuisine).tag(cuisine)
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color(.systemBackground))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color(.systemGray4), lineWidth: 1)
-                    )
-                }
-                
-                // Banner photo
-                VStack(alignment: .leading) {
-                    Text("Banner Photo")
-                        .font(.headline)
-                    
-                    ZStack {
-                        if let image = restaurantImage {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(height: 200)
-                        } else {
-                            Rectangle()
-                                .fill(Color(.systemGray5))
-                                .frame(height: 200)
-                                .overlay(
-                                    Text("No Image Selected")
-                                        .foregroundColor(.gray)
-                                )
-                        }
-                    }
-                    .cornerRadius(8)
-                    
+        VStack(alignment: .leading, spacing: 15) {
+            // Header with Delete button aligned to top right
+            HStack {
+                Spacer()
+                if isRegistered {
                     Button(action: {
-                        currentImageSelection = .restaurant
-                        isImagePickerShown = true
+                        print("Delete button tapped")
+                        alertType = .deleteConfirmation
                     }) {
                         HStack {
-                            Image(systemName: "arrow.up.square")
-                            Text("Upload Photo")
+                            Image(systemName: "trash")
+                            Text("Delete")
                         }
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
-                        .background(Color.green)
+                        .background(Color(AppColors.errorRed))
                         .foregroundColor(.white)
                         .cornerRadius(8)
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 8)
+                    .disabled(isSubmitting)
+                    .buttonStyle(PlainButtonStyle()) // Add explicit button style
                 }
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(8)
-            .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 1)
             
-            // Submit button
-            if !shouldHideSaveButton() {
+            // Restaurant name
+            VStack(alignment: .leading) {
+                Text("Restaurant Name")
+                    .font(.headline)
+                TextField("Enter restaurant name", text: $restaurantName)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+            }
+            
+            // Estimated time
+            VStack(alignment: .leading) {
+                Text("Estimated Time (minutes)")
+                    .font(.headline)
+                TextField("30", text: $estimatedTime)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .keyboardType(.numberPad)
+            }
+            
+            // Cuisine selection
+            VStack(alignment: .leading) {
+                Text("Cuisine")
+                    .font(.headline)
+                
+                Picker("Select cuisine", selection: $selectedCuisine) {
+                    ForEach(cuisineTypes, id: \.self) { cuisine in
+                        Text(cuisine).tag(cuisine)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(Color(.systemBackground))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(.systemGray4), lineWidth: 1)
+                )
+            }
+            
+            // Banner photo
+            VStack(alignment: .leading) {
+                Text("Banner Photo")
+                    .font(.headline)
+                
+                if let image = restaurantImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 150)
+                        .cornerRadius(8)
+                } else {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 150)
+                        .cornerRadius(8)
+                        .overlay(
+                            Text("No image selected")
+                                .foregroundColor(.gray)
+                        )
+                }
+                
+                Button(action: {
+                    currentImageSelection = .restaurant
+                    isImagePickerShown = true
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.up.square")
+                        Text("Upload Photo")
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .background(Color(AppColors.primaryGreen))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 8)
+            }
+            
+            Spacer(minLength: 30) // Add space between upload photo and update button
+            
+            // Action Buttons
+            if isRegistered {
+                Button(action: submitRestaurantProfile) {
+                    HStack {
+                        if isSubmitting {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Update Restaurant")
+                                .font(AppFonts.buttonText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(AppColors.primaryGreen))
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                }
+                .disabled(isSubmitting)
+            } else {
+                // Register Button (when not registered)
                 Button(action: submitRestaurantProfile) {
                     HStack {
                         if isSubmitting {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         }
-                        Text(isRegistered ? "Save Changes" : "Register Restaurant")
-                            .fontWeight(.semibold)
+                        Text("Register Restaurant")
+                            .font(AppFonts.buttonText)
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.green)
+                    .background(Color(AppColors.primaryGreen))
                     .foregroundColor(.white)
                     .cornerRadius(10)
                 }
                 .disabled(isSubmitting)
             }
         }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(8)
+        .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 1)
     }
     
     // MARK: - Methods
@@ -432,106 +521,113 @@ struct RestaurantManagementView: View {
     }
     
     private func updateRestaurantProfile() {
-        // Prepare the form data
-        let multipartFormData = createRestaurantFormData()
+        // Get the user ID and restaurant ID
+        guard let userId = authService.getUserId(),
+              let restaurantId = UserDefaults.standard.string(forKey: "restaurant_id") else {
+            showAlert(message: "User ID or Restaurant ID not found")
+            isSubmitting = false
+            return
+        }
         
-        // Send the API request
-        submitRestaurantData(multipartFormData: multipartFormData)
+        // Update existing restaurant using multipart
+        restaurantService.updateRestaurantWithMultipart(
+            userId: userId,
+            restaurantId: restaurantId,
+            restaurantName: restaurantName,
+            cuisine: selectedCuisine,
+            estimatedTime: Int(estimatedTime) ?? 30,
+            bannerImage: restaurantImage
+        ) { result in
+            self.isSubmitting = false
+            
+            switch result {
+            case .success(let updatedRestaurantId):
+                // Update restaurant data in UserDefaults
+                let restaurantData: [String: Any] = [
+                    "id": updatedRestaurantId,
+                    "name": self.restaurantName,
+                    "estimatedTime": Int(self.estimatedTime) ?? 30,
+                    "cuisine": self.selectedCuisine,
+                    "isRegistered": true
+                ]
+                
+                if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
+                    UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
+                }
+                
+                // Update the data controller
+                self.dataController.restaurant.id = updatedRestaurantId
+                self.dataController.restaurant.name = self.restaurantName
+                
+                self.showAlert(message: "Restaurant updated successfully")
+                
+            case .failure(let error):
+                self.showAlert(message: "Failed to update restaurant: \(error.localizedDescription)")
+            }
+        }
     }
     
-    private func submitRestaurantData(multipartFormData: [String: Any]) {
-        // This is a simplified example. In a real app, use NetworkManager for this request
-        guard let url = URL(string: NetworkManager.baseURL + "/register-restaurant") else {
-            showAlert(message: "Invalid URL")
+    private func deleteRestaurant() {
+        isSubmitting = true
+        
+        // Get the restaurant ID
+        guard let restaurantId = UserDefaults.standard.string(forKey: "restaurant_id") else {
+            showAlert(message: "Restaurant ID not found")
             isSubmitting = false
             return
         }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Log the deletion attempt
+        DebugLogger.shared.log("Attempting to delete restaurant with ID: \(restaurantId)", category: .network, tag: "DELETE_RESTAURANT")
         
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: multipartFormData)
-        } catch {
-            showAlert(message: "Failed to prepare data: \(error.localizedDescription)")
-            isSubmitting = false
-            return
-        }
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        // Delete the restaurant
+        restaurantService.deleteRestaurant(restaurantId: restaurantId) { result in
             DispatchQueue.main.async {
                 self.isSubmitting = false
                 
-                if let error = error {
-                    self.showAlert(message: "Error: \(error.localizedDescription)")
-                    return
-                }
-                
-                guard let data = data else {
-                    self.showAlert(message: "No data received")
-                    return
-                }
-                
-                do {
-                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        if let restaurantId = json["_id"] as? String {
-                            // Update UserDefaults with the new restaurant ID
-                            UserDefaults.standard.set(restaurantId, forKey: "restaurant_id")
-                            UserDefaults.standard.set(true, forKey: "is_restaurant_registered")
-                            
-                            // Update the restaurant data in UserDefaults
-                            let restaurantData: [String: Any] = [
-                                "id": restaurantId,
-                                "name": self.restaurantName,
-                                "estimatedTime": Int(self.estimatedTime) ?? 30,
-                                "cuisine": self.selectedCuisine,
-                                "isRegistered": true
-                            ]
-                            
-                            if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
-                                UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
-                            }
-                            
-                            // Update the auth service with restaurant info
-                            if let userId = self.authService.getUserId() {
-                                let updatedUser = UserRestaurantProfile(
-                                    id: userId,
-                                    restaurantId: restaurantId,
-                                    restaurantName: self.restaurantName,
-                                    estimatedTime: Int(self.estimatedTime) ?? 30,
-                                    cuisine: self.selectedCuisine,
-                                    restaurantImage: self.restaurantImage
-                                )
-                                self.authService.currentUser = updatedUser
-                            }
-                            
-                            // Update the data controller
-                            self.dataController.restaurant.id = restaurantId
-                            self.dataController.restaurant.name = self.restaurantName
-                            
-                            // Update the isRegistered state
-                            self.isRegistered = true
-                            
-                            self.showAlert(message: "Restaurant registered successfully")
-                        } else if let success = json["success"] as? Bool, success {
-                            self.showAlert(message: "Restaurant profile updated successfully")
-                        } else if let message = json["message"] as? String {
-                            self.showAlert(message: message)
-                        } else {
-                            self.showAlert(message: "Unknown server response")
-                        }
+                switch result {
+                case .success(_):
+                    // Reset restaurant state but keep the user account
+                    self.restaurantName = ""
+                    self.estimatedTime = "30"
+                    self.selectedCuisine = "North Indian"
+                    self.restaurantImage = nil
+                    self.isRegistered = false
+                    
+                    // Reset restaurant data in DataController
+                    self.dataController.restaurant.id = ""
+                    self.dataController.restaurant.name = ""
+                    
+                    // Update the user's restaurant info in AuthService but maintain user ID
+                    if var currentUser = self.authService.currentUser {
+                        // Preserve the user ID
+                        let userId = currentUser.id
+                        
+                        // Reset restaurant-specific fields
+                        currentUser.restaurantId = ""
+                        currentUser.restaurantName = ""
+                        currentUser.estimatedTime = 0
+                        currentUser.cuisine = ""
+                        
+                        // Update the user
+                        self.authService.currentUser = currentUser
                     }
-                } catch {
-                    self.showAlert(message: "Failed to parse response: \(error.localizedDescription)")
+                    
+                    self.showAlert(message: "Restaurant deleted successfully")
+                    
+                case .failure(let error):
+                    DebugLogger.shared.logError(error, tag: "DELETE_RESTAURANT_ERROR")
+                    self.showAlert(message: "Failed to delete restaurant: \(error.localizedDescription)")
                 }
             }
-        }.resume()
+        }
     }
+    
+
     
     private func showAlert(message: String) {
         alertMessage = message
-        showAlert = true
+        alertType = .message(message)
     }
 }
 

@@ -70,8 +70,8 @@ struct UIKitImagePicker: UIViewControllerRepresentable {
         
         // Process and resize image if needed
         private func processImage(_ image: UIImage) -> UIImage {
-            // If the image is too large, resize it to a reasonable size
-            let maxSize: CGFloat = 1200
+            // If the image is extremely large, resize it while maintaining quality
+            let maxSize: CGFloat = 1500  // Increased from 1200 for better quality
             
             if max(image.size.width, image.size.height) > maxSize {
                 let scale = maxSize / max(image.size.width, image.size.height)
@@ -79,14 +79,18 @@ struct UIKitImagePicker: UIViewControllerRepresentable {
                 let newHeight = image.size.height * scale
                 let newSize = CGSize(width: newWidth, height: newHeight)
                 
-                UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+                // Use a higher scale factor (2.0) for better quality resizing
+                UIGraphicsBeginImageContextWithOptions(newSize, false, 2.0)
                 image.draw(in: CGRect(origin: .zero, size: newSize))
                 let resizedImage = UIGraphicsGetImageFromCurrentImageContext() ?? image
                 UIGraphicsEndImageContext()
                 
+                DebugLogger.shared.log("Image resized from \(Int(image.size.width))x\(Int(image.size.height)) to \(Int(newWidth))x\(Int(newHeight))", category: .app)
                 return resizedImage
             }
             
+            // If image is already reasonably sized, just return it
+            DebugLogger.shared.log("Image is already appropriate size: \(Int(image.size.width))x\(Int(image.size.height))", category: .app)
             return image
         }
     }

@@ -8,6 +8,7 @@ struct ProductsView: View {
     // Environment
     @EnvironmentObject private var dataController: DataController
     @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var productService: ProductService
     
     // State
     @State private var isAddProductSheetPresented = false
@@ -15,183 +16,188 @@ struct ProductsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String? = nil
     @State private var showDebugInfo = false
+    @State private var selectedProduct: Product? = nil
+    @State private var showEditProductSheet = false
+    @State private var showProductDetailSheet = false
+    @State private var productToView: Product? = nil
+    @State private var isLoadingProductDetails = false
+    @State private var showLoadingOverlay = false
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Header with title and add button
-            HStack {
-                Text("Products")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                
-                Spacer()
-                
-                // Debug info - show restaurant ID being used
-                if let restaurantId = UserDefaults.standard.string(forKey: "restaurant_id"), !restaurantId.isEmpty {
-                    Text("ID: \(String(restaurantId.suffix(6)))")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.trailing, 8)
-                }
-                
-                // Refresh button with menu
-                Menu {
-                    Button(action: {
-                        loadProducts()
-                    }) {
-                        Label("Refresh Products", systemImage: "arrow.clockwise")
-                    }
-                    
-                    Button(action: {
-                        // Clear image cache and reload
-                        ProductApi.shared.clearImageCache()
-                        loadProducts()
-                    }) {
-                        Label("Clear Cache & Reload", systemImage: "xmark.circle")
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 16))
-                        .padding(8)
-                        .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
-                        .cornerRadius(8)
-                }
-                .padding(.trailing, 8)
-                
-                Button(action: {
-                    isAddProductSheetPresented = true
-                }) {
-                    HStack {
-                        Image(systemName: "plus")
-                        Text("Add Product")
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-            }
-            .padding()
-            .background(Color(.systemBackground))
-            
-            // Divider
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(height: 1)
-            
+        ZStack {
+            // Background color
+            Color(UIColor.systemGray6)
+                .edgesIgnoringSafeArea(.all)
             // Main content
-            if isLoading {
-                Spacer()
-                ProgressView("Loading products...")
-                Spacer()
-            } else if let error = errorMessage {
-                Spacer()
-                VStack(spacing: 12) {
-                    Text("Error loading products")
-                        .font(.headline)
-                        .foregroundColor(.red)
+            VStack(spacing: 0) {
+                // Custom header that matches the screenshot
+                HStack {
+                    Text("Products")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
                     
-                    Text(error)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
+                    Spacer()
                     
-                    // Debug info button
-                    Button(action: { showDebugInfo.toggle() }) {
-                        Label(showDebugInfo ? "Hide Debug Info" : "Show Debug Info", systemImage: "info.circle")
-                            .font(.caption)
-                    }
-                    .padding(.vertical, 4)
-                    
-                    // Debug info
-                    if showDebugInfo {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("User ID: \(authService.getUserId() ?? "None")")
-                            Text("Is Authenticated: \(authService.isAuthenticated ? "Yes" : "No")")
-                            Text("Has Token: \(authService.getToken() != nil ? "Yes" : "No")")
+                    Button(action: {
+                        // Refresh action
+                        Task {
+                            await loadProductsAsync()
                         }
-                        .font(.caption2)
-                        .padding()
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(8)
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title2)
+                            .foregroundColor(Color(AppColors.primaryGreen))
                     }
-                    
-                    Button("Retry") {
-                        loadProducts()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-                .padding()
-                Spacer()
-            } else if products.isEmpty {
-                Spacer()
-                VStack(spacing: 16) {
-                    Image(systemName: "cube.box")
-                        .font(.system(size: 70))
-                        .foregroundColor(.gray)
-                    
-                    Text("No Products Yet")
-                        .font(.title)
-                        .fontWeight(.semibold)
-                    
-                    Text("Add your first product to get started")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    .padding(.trailing, 8)
                     
                     Button(action: {
                         isAddProductSheetPresented = true
                     }) {
                         HStack {
-                            Image(systemName: "plus.circle.fill")
+                            Image(systemName: "plus")
                             Text("Add Product")
+                                .fontWeight(.semibold)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.green)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color(AppColors.primaryGreen))
                         .foregroundColor(.white)
                         .cornerRadius(10)
-                        .font(.headline)
                     }
                 }
-                .padding()
-                Spacer()
-            } else {
-                // Product grid
-                ScrollView {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.adaptive(minimum: 300, maximum: 350), spacing: 20)
-                        ],
-                        spacing: 20
-                    ) {
-                        ForEach(products) { product in
-                            ProductCard(product: product)
-                                .contextMenu {
-                                    Button(action: {
-                                        // Edit product action
-                                    }) {
-                                        Label("Edit", systemImage: "pencil")
-                                    }
-                                    
-                                    Button(role: .destructive, action: {
-                                        deleteProduct(product)
-                                    }) {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
+                .padding(.horizontal)
+                .padding(.vertical, 16)
+                
+                // Loading state for initial products load
+                if isLoading && products.isEmpty {
+                    // Initial loading view
+                    VStack(spacing: 20) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(1.5)
+                        
+                        Text("Loading products...")
+                            .font(AppFonts.body)
+                            .foregroundColor(Color(AppColors.darkGray))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(AppColors.background))
+                } else if let error = errorMessage {
+                    // Error view
+                    VStack(spacing: 20) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(Color(AppColors.errorRed))
+                        
+                        Text(error)
+                            .font(AppFonts.body)
+                            .foregroundColor(Color(AppColors.darkGray))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 30)
+                        
+                        Button(action: {
+                            loadProducts()
+                        }) {
+                            Text("Try Again")
+                                .font(AppFonts.buttonText)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 12)
+                                .background(Color(AppColors.primaryGreen))
+                                .cornerRadius(10)
                         }
+                        .padding(.top, 10)
                     }
-                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(AppColors.background))
+                } else if products.isEmpty {
+                    // Empty state
+                    VStack(spacing: 20) {
+                        Image(systemName: "cube.box")
+                            .font(.system(size: 50))
+                            .foregroundColor(Color(AppColors.mediumGray))
+                        
+                        Text("No Products Found")
+                            .font(AppFonts.title)
+                            .foregroundColor(Color(AppColors.darkGray))
+                        
+                        Text("Add your first product to get started")
+                            .font(AppFonts.body)
+                            .foregroundColor(Color(AppColors.darkGray))
+                        
+                        Button(action: {
+                            isAddProductSheetPresented = true
+                        }) {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Add Product")
+                            }
+                            .font(AppFonts.buttonText)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(Color(AppColors.primaryGreen))
+                            .cornerRadius(10)
+                        }
+                        .padding(.top, 10)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(AppColors.background))
+                } else {
+                    // Product grid
+                    // Simple ScrollView without NavigationView for cleaner UI
+                    ScrollView {
+                        // Add a small vertical padding at the top
+                        Color.clear.frame(height: 8)
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.adaptive(minimum: 320, maximum: 320), spacing: 16)
+                            ],
+                            spacing: 16
+                        ) {
+                            ForEach(products) { product in
+                                ProductCard(product: product)
+                                    .onTapGesture {
+                                        showProductDetail(product)
+                                    }
+                                    .contextMenu {
+                                        Button(action: {
+                                            // Edit product action
+                                            selectedProduct = product
+                                            showEditProductSheet = true
+                                        }) {
+                                            Label("Edit", systemImage: "pencil")
+                                        }
+                                        
+                                        Button(role: .destructive, action: {
+                                            deleteProduct(product)
+                                        }) {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+                            }
+                        }
+                        .padding(16)
+                    }
                 }
-                .refreshable {
-                    await loadProductsAsync()
-                }
+            }
+            
+            // Loading overlay
+            if showLoadingOverlay {
+                Color.black.opacity(0.4)
+                    .edgesIgnoringSafeArea(.all)
+                    .overlay(
+                        VStack {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(1.5)
+                            
+                            Text("Loading product details...")
+                                .foregroundColor(.white)
+                                .font(AppFonts.body)
+                                .padding(.top, 10)
+                        }
+                    )
             }
         }
         .sheet(isPresented: $isAddProductSheetPresented) {
@@ -202,8 +208,65 @@ struct ProductsView: View {
                 .environmentObject(dataController)
                 .environmentObject(authService)
         }
+        .sheet(isPresented: $showEditProductSheet) {
+            // Reload products after dismissing the edit sheet
+            loadProducts()
+        } content: {
+            if let product = selectedProduct {
+                ProductFormView(isPresented: $showEditProductSheet, product: product)
+                    .environmentObject(productService)
+            }
+        }
+        .sheet(isPresented: $showProductDetailSheet) {
+            // Reload products after viewing details
+            loadProducts()
+        } content: {
+            if let product = productToView {
+                ProductDetailView(product: product)
+                    .environmentObject(productService)
+            }
+        }
         .onAppear {
             loadProducts()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .productUpdated)) { _ in
+            // Refresh the product list when any product is updated
+            loadProducts()
+        }
+    }
+    
+    // Function to handle product detail view presentation
+    private func showProductDetail(_ product: Product) {
+        // Set loading overlay while preparing product
+        showLoadingOverlay = true
+        
+        // First ensure we have the product fully loaded
+        Task {
+            do {
+                // Get the latest product data
+                if let updatedProduct = try await ProductApi.shared.getProduct(productId: product.id) {
+                    await MainActor.run {
+                        productToView = updatedProduct
+                        showLoadingOverlay = false
+                        showProductDetailSheet = true
+                    }
+                } else {
+                    // Fall back to the cached product if we couldn't get the updated one
+                    await MainActor.run {
+                        productToView = product
+                        showLoadingOverlay = false
+                        showProductDetailSheet = true
+                    }
+                }
+            } catch {
+                // If there's an error, just use the original product
+                await MainActor.run {
+                    DebugLogger.shared.log("Failed to refresh product details: \(error.localizedDescription)", category: .error)
+                    productToView = product
+                    showLoadingOverlay = false
+                    showProductDetailSheet = true
+                }
+            }
         }
     }
     
@@ -300,16 +363,17 @@ struct ProductCard: View {
     let product: Product
     @State private var productImage: UIImage? = nil
     @State private var isLoadingImage = false
+    @State private var refreshTrigger = UUID()
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Product image or placeholder
-            ZStack {
+        VStack(alignment: .leading, spacing: 0) {
+            // Product image with category badge overlay
+            ZStack(alignment: .topTrailing) {
                 if isLoadingImage {
                     Rectangle()
                         .fill(Color.gray.opacity(0.1))
-                        .aspectRatio(16/9, contentMode: .fit)
-                        .frame(height: 160)
+                        .frame(height: 200)
+                        .clipped()
                         .overlay(
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle())
@@ -318,83 +382,97 @@ struct ProductCard: View {
                     Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(height: 160)
+                        .frame(height: 200)
                         .clipped()
                 } else {
                     Rectangle()
                         .fill(Color.gray.opacity(0.1))
-                        .aspectRatio(16/9, contentMode: .fit)
-                        .frame(height: 160)
+                        .frame(height: 200)
+                        .clipped()
                         .overlay(
-                            Image(systemName: "cube.fill")
+                            Image(systemName: "photo")
                                 .foregroundColor(.gray)
                                 .font(.largeTitle)
                         )
-                        .onAppear {
-                            loadProductImage()
-                        }
                 }
                 
-                // Category badge
-                VStack {
-                    HStack {
-                        Spacer()
-                        Text(product.category)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.black.opacity(0.6))
-                            .foregroundColor(.white)
-                            .cornerRadius(4)
-                    }
+                // Category badge with app theme colors
+                Text(product.category)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white)
+                    .foregroundColor(Color(AppColors.primaryGreen))
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color(AppColors.primaryGreen), lineWidth: 1)
+                    )
+                    .padding(8)
+            }
+            .onAppear {
+                loadProductImage()
+            }
+            .onChange(of: refreshTrigger) { _ in
+                loadProductImage()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .productImageCacheCleared)) { notification in
+                if let productId = notification.userInfo?["productId"] as? String, 
+                   productId == product.id {
+                    // Force a reload of this product's image
+                    self.productImage = nil
+                    self.refreshTrigger = UUID()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .productUpdated)) { notification in
+                if let productId = notification.userInfo?["productId"] as? String,
+                   let imageUpdated = notification.userInfo?["imageUpdated"] as? Bool,
+                   productId == product.id && imageUpdated {
+                    // Force a reload of this product's image
+                    self.productImage = nil
+                    self.refreshTrigger = UUID()
+                }
+            }
+            
+            // Product details
+            VStack(alignment: .leading, spacing: 8) {
+                // Name and price in the same row
+                HStack(alignment: .center) {
+                    Text(product.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
                     Spacer()
+                    
+                    Text("₹\(product.price)")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(Color(AppColors.primaryGreen))
                 }
-                .padding(8)
-            }
-            .cornerRadius(8)
-            
-            // Product name and price
-            HStack {
-                Text(product.name)
-                    .font(.headline)
-                    .lineLimit(1)
                 
-                Spacer()
-                
-                Text("₹\(product.price)")
-                    .font(.headline)
-                    .foregroundColor(.green)
-            }
-            
-            // Product description
-            Text(product.description)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            
-            // Extra time indicator if applicable
-            if product.extraTime > 0 {
-                HStack {
-                    Image(systemName: "clock")
-                        .font(.caption)
-                    Text("Extra preparation: +\(product.extraTime)m")
-                        .font(.caption)
+                if !product.description.isEmpty {
+                    Text(product.description)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                 }
-                .foregroundColor(.orange)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
-        .padding(16)
-        .background(Color(.systemBackground))
+        .background(Color.white)
         .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-        .frame(maxWidth: .infinity)
-        .frame(height: 300) // Fixed height to ensure consistent card sizes
+        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+        .frame(width: 320, height: 320) // Fixed size for consistent grid layout
     }
     
     private func loadProductImage() {
-        // Use the correct endpoint for product photos
-        let imageUrl = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)"
+        // Use the correct endpoint for product photos with a timestamp to prevent caching
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let imageUrl = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)?v=\(timestamp)"
         
         // Delay loading to prevent too many concurrent requests
         DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0.1...0.5)) {

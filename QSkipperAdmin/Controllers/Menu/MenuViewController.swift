@@ -232,14 +232,16 @@ struct ProductCell: View {
     let product: Product
     let onEdit: () -> Void
     let onToggle: (Bool) -> Void
+    @State private var refreshTrigger = UUID()
     
     var body: some View {
         Button(action: onEdit) {
             HStack(spacing: 12) {
                 // Product image or placeholder
-                let imageUrlString = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)"
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let imageUrlString = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)?v=\(timestamp)"
                 if let imageUrl = URL(string: imageUrlString) {
-                    AsyncImage(url: imageUrl) { phase in
+                    AsyncImage(url: imageUrl, transaction: Transaction(animation: .easeInOut)) { phase in
                         switch phase {
                         case .empty:
                             ProgressView()
@@ -262,6 +264,22 @@ struct ProductCell: View {
                                 .cornerRadius(10)
                         @unknown default:
                             EmptyView()
+                        }
+                    }
+                    .id(refreshTrigger) // Force refresh when this ID changes
+                    .onReceive(NotificationCenter.default.publisher(for: .productImageCacheCleared)) { notification in
+                        if let productId = notification.userInfo?["productId"] as? String, 
+                           productId == product.id {
+                            // Force a reload of this product's image
+                            refreshTrigger = UUID()
+                        }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .productUpdated)) { notification in
+                        if let productId = notification.userInfo?["productId"] as? String,
+                           let imageUpdated = notification.userInfo?["imageUpdated"] as? Bool,
+                           productId == product.id && imageUpdated {
+                            // Force a reload of this product's image
+                            refreshTrigger = UUID()
                         }
                     }
                 } else {
@@ -317,6 +335,25 @@ class MenuViewModel: ObservableObject {
     
     @Published var showAddProductSheet: Bool = false
     @Published var selectedProduct: Product? = nil
+    
+    private var notificationObserver: NSObjectProtocol?
+    
+    init() {
+        // Set up notification observer for product updates
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: .productUpdated,
+            object: nil,
+            queue: .main) { [weak self] _ in
+                self?.loadProducts()
+            }
+    }
+    
+    deinit {
+        // Clean up notification observer
+        if let observer = notificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
     
     // Computed property for filtered products
     var filteredProducts: [Product] {

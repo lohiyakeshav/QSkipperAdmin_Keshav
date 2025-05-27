@@ -15,6 +15,8 @@ class RestaurantService: ObservableObject {
         static let baseURL = NetworkManager.baseURL
         static let restaurants = "\(baseURL)/restaurants"
         static let user = "\(baseURL)/restaurants/user"
+        static let updateRestaurant = "\(baseURL)/update-restaurant"
+        static let deleteRestaurant = "\(baseURL)" // The route is /delete-restaurant/:id
     }
     
     // Private properties
@@ -655,6 +657,320 @@ class RestaurantService: ObservableObject {
                 completion(defaultImage)
             }
         }
+    }
+    
+    /// Update restaurant with multipart form data
+    /// - Parameters:
+    ///   - userId: The user ID
+    ///   - restaurantId: The restaurant ID
+    ///   - restaurantName: The restaurant name
+    ///   - cuisine: The cuisine type
+    ///   - estimatedTime: The estimated time in minutes
+    ///   - bannerImage: The banner image
+    ///   - completion: Completion handler with result
+    func updateRestaurantWithMultipart(userId: String, restaurantId: String, restaurantName: String, cuisine: String, estimatedTime: Int, bannerImage: UIImage?, completion: @escaping (Result<String, Error>) -> Void) {
+        isLoading = true
+        error = nil
+        
+        guard let url = URL(string: Endpoints.updateRestaurant) else {
+            error = "Invalid URL"
+            completion(.failure(NSError(domain: "RestaurantService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        // Generate a boundary string for multipart form data
+        let boundary = "Boundary-\(UUID().uuidString)"
+        
+        // Create request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        // Create multipart form body
+        var body = Data()
+        
+        // Function to add text field
+        func appendTextField(fieldName: String, value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(fieldName)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        
+        // Add text fields
+        appendTextField(fieldName: "userId", value: userId)
+        appendTextField(fieldName: "restaurant_Name", value: restaurantName)
+        appendTextField(fieldName: "cuisines", value: cuisine)
+        appendTextField(fieldName: "estimatedTime", value: String(estimatedTime))
+        
+        // Add image if available - using a lower compression to ensure small file size
+        if let image = bannerImage, let imageData = image.jpegData(compressionQuality: 0.6) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"bannerPhoto64Image\"; filename=\"restaurant.jpg\"\r\n".data(using: .utf8)!)
+            body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+            body.append(imageData)
+            body.append("\r\n".data(using: .utf8)!)
+        }
+        
+        // End the form data
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        // Set the body of the request
+        request.httpBody = body
+        
+        // Log the request
+        DebugLogger.shared.log("Sending update restaurant request to: \(url.absoluteString)", category: .network)
+        
+        // Send the request
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                self.isLoading = false
+                
+                if let error = error {
+                    self.error = "Failed to update restaurant: \(error.localizedDescription)"
+                    completion(.failure(error))
+                    return
+                }
+                
+                guard let data = data else {
+                    let error = NSError(domain: "RestaurantService", code: 1, userInfo: [NSLocalizedDescriptionKey: "No data received"])
+                    self.error = error.localizedDescription
+                    completion(.failure(error))
+                    return
+                }
+                
+                // Log the response for debugging
+                if let responseString = String(data: data, encoding: .utf8) {
+                    DebugLogger.shared.log("Restaurant update response: \(responseString)", category: .network)
+                }
+                
+                do {
+                    // Try to parse the response
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let message = json["message"] as? String {
+                            DebugLogger.shared.log("Restaurant update message: \(message)", category: .network)
+                            
+                            // If message contains "updated" or we have an ID, consider it a success
+                            if message.contains("updated") || json["id"] != nil {
+                                if let id = json["id"] as? String {
+                                    completion(.success(id))
+                                } else {
+                                    completion(.success(restaurantId))
+                                }
+                                return
+                            }
+                        }
+                        
+                        // Look for success status
+                        if let success = json["success"] as? Bool, success == true {
+                            // If we have a restaurant ID in the response, use it
+                            if let id = json["id"] as? String {
+                                completion(.success(id))
+                            } else {
+                                // Otherwise, return the original restaurant ID
+                                completion(.success(restaurantId))
+                            }
+                        } else {
+                            // Check for error message
+                            if let errorMessage = json["error"] as? String {
+                                let error = NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                                self.error = errorMessage
+                                completion(.failure(error))
+                            } else {
+                                let error = NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to update restaurant"])
+                                self.error = "Failed to update restaurant"
+                                completion(.failure(error))
+                            }
+                        }
+                    } else {
+                        // Not valid JSON
+                        throw NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
+                    }
+                } catch {
+                    self.error = "Failed to parse update response: \(error.localizedDescription)"
+                    completion(.failure(error))
+                }
+            }
+        }.resume()
+    }
+    
+    /// Delete a restaurant
+    /// - Parameters:
+    ///   - restaurantId: The restaurant ID to delete
+    ///   - completion: Completion handler with result
+    func deleteRestaurant(restaurantId: String, completion: @escaping (Result<Bool, Error>) -> Void) {
+        print("DELETE RESTAURANT CALLED with ID: \(restaurantId)")
+        isLoading = true
+        error = nil
+        
+        // Define a recursive helper to try multiple URL formats
+        func tryDeleteWithUrlFormat(urlIndex: Int) {
+            // Construct the URL with fallbacks
+            let urlOptions = [
+                "\(NetworkManager.baseURL)/delete-restaurant/\(restaurantId)",
+                "\(NetworkManager.baseURL)/restaurants/delete/\(restaurantId)",
+                "\(NetworkManager.baseURL)/restaurants/\(restaurantId)"  // Some APIs use DELETE on the resource URL
+            ]
+            
+            // If we've tried all URLs, give up
+            if urlIndex >= urlOptions.count {
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.error = "Failed to delete restaurant: No valid endpoint found"
+                    completion(.failure(NSError(domain: "RestaurantService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No valid endpoint found"])))
+                }
+                return
+            }
+            
+            guard let url = URL(string: urlOptions[urlIndex]) else {
+                // Try next URL format
+                tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                return
+            }
+            
+            // Create request
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            
+            // Log the request
+            DebugLogger.shared.log("Sending delete restaurant request to: \(url.absoluteString)", category: .network)
+            
+            // Print to console for immediate debugging
+            print("DELETE REQUEST URL: \(url.absoluteString)")
+            print("Deleting restaurant with ID: \(restaurantId)")
+            
+            // Send the request
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                // Log HTTP response details
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("DELETE RESPONSE STATUS: \(httpResponse.statusCode)")
+                    DebugLogger.shared.log("Delete restaurant HTTP status: \(httpResponse.statusCode)", category: .network, tag: "DELETE_RESTAURANT")
+                    
+                    // If we got a 404 or other error, try the next URL
+                    if httpResponse.statusCode >= 400 && urlIndex + 1 < urlOptions.count {
+                        tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                        return
+                    }
+                }
+                
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    
+                    if let error = error {
+                        // If network error, try the next URL
+                        if urlIndex + 1 < urlOptions.count {
+                            tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                            return
+                        }
+                        
+                        self.error = "Failed to delete restaurant: \(error.localizedDescription)"
+                        completion(.failure(error))
+                        return
+                    }
+                    
+                    guard let data = data else {
+                        if urlIndex + 1 < urlOptions.count {
+                            tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                            return
+                        }
+                        
+                        let error = NSError(domain: "RestaurantService", code: 1, userInfo: [NSLocalizedDescriptionKey: "No data received"])
+                        self.error = error.localizedDescription
+                        completion(.failure(error))
+                        return
+                    }
+                    
+                    // Log the response for debugging
+                    if let responseString = String(data: data, encoding: .utf8) {
+                        DebugLogger.shared.log("Restaurant delete response: \(responseString)", category: .network)
+                        print("DELETE RESPONSE BODY: \(responseString)")
+                        
+                        // If the response is just plain text "success" or similar, consider it a success
+                        if responseString.lowercased().contains("success") || 
+                           responseString.lowercased().contains("deleted") {
+                            self.handleSuccessfulDeletion(completion: completion)
+                            return
+                        }
+                    }
+                    
+                    do {
+                        // Try to parse the response
+                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            // Consider either "success": true or "message" containing "deleted" as a success
+                            let isSuccess = (json["success"] as? Bool == true) || 
+                                           (json["message"] as? String)?.contains("deleted") == true
+                            
+                            if isSuccess {
+                                self.handleSuccessfulDeletion(completion: completion)
+                                return
+                            } else {
+                                // Check for error message
+                                if let errorMessage = json["error"] as? String {
+                                    // If it's a not found error, try the next URL
+                                    if errorMessage.lowercased().contains("not found") && urlIndex + 1 < urlOptions.count {
+                                        tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                                        return
+                                    }
+                                    
+                                    let error = NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                                    self.error = errorMessage
+                                    completion(.failure(error))
+                                } else {
+                                    // Try next URL if we haven't exhausted them
+                                    if urlIndex + 1 < urlOptions.count {
+                                        tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                                        return
+                                    }
+                                    
+                                    let error = NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to delete restaurant"])
+                                    self.error = "Failed to delete restaurant"
+                                    completion(.failure(error))
+                                }
+                            }
+                        } else {
+                            // Not valid JSON, try next URL
+                            if urlIndex + 1 < urlOptions.count {
+                                tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                                return
+                            }
+                            
+                            throw NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
+                        }
+                    } catch {
+                        // Log the raw response for debugging
+                        DebugLogger.shared.logError(error, tag: "DELETE_RESTAURANT_PARSE")
+                        if let responseString = String(data: data, encoding: .utf8) {
+                            DebugLogger.shared.log("Failed to parse response: \(responseString)", category: .network, tag: "DELETE_RESTAURANT_RAW")
+                        }
+                        
+                        // Try next URL if available
+                        if urlIndex + 1 < urlOptions.count {
+                            tryDeleteWithUrlFormat(urlIndex: urlIndex + 1)
+                            return
+                        }
+                        
+                        self.error = "Failed to parse delete response: \(error.localizedDescription)"
+                        completion(.failure(error))
+                    }
+                }
+            }.resume()
+        }
+        
+        // Start trying URL formats
+        tryDeleteWithUrlFormat(urlIndex: 0)
+    }
+    
+    /// Helper method to handle successful restaurant deletion
+    /// - Parameter completion: The completion handler to call with success result
+    func handleSuccessfulDeletion(completion: @escaping (Result<Bool, Error>) -> Void) {
+        // Clear restaurant ID but maintain user ID
+        UserDefaults.standard.removeObject(forKey: "restaurant_id")
+        UserDefaults.standard.set(false, forKey: "is_restaurant_registered")
+        
+        // Post notification that restaurant was deleted
+        NotificationCenter.default.post(name: NSNotification.Name("RestaurantDeleted"), object: nil)
+        
+        // Success
+        completion(.success(true))
     }
 }
 

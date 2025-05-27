@@ -14,6 +14,7 @@ struct ProfileEditView: View {
     @State private var selectedImage: UIImage?
     @State private var showImagePicker = false
     @State private var showSuccessAlert = false
+    @State private var userImage: UIImage?
     
     var body: some View {
         Form {
@@ -99,7 +100,9 @@ struct ProfileEditView: View {
         .navigationTitle("Edit Profile")
         .onAppear(perform: loadUserProfile)
         .sheet(isPresented: $showImagePicker) {
-            ImagePicker(image: $selectedImage)
+            ImagePicker(image: $selectedImage, onImageSelected: {
+                userImage = selectedImage
+            })
         }
         .alert(isPresented: $showSuccessAlert) {
             Alert(

@@ -18,10 +18,12 @@ class ProductService: ObservableObject {
     /// Fetch products for a restaurant
     /// - Parameter restaurantId: The restaurant ID
     func fetchRestaurantProducts(restaurantId: String = "") {
-        isLoading = true
-        error = nil
-        
         Task {
+            await MainActor.run {
+                isLoading = true
+                error = nil
+            }
+            
             do {
                 DebugLogger.shared.log("Starting to load products", category: .network)
                 
@@ -36,14 +38,14 @@ class ProductService: ObservableObject {
                 // Pass the restaurant ID to the API call
                 let fetchedProducts = try await productApi.getAllProducts(restaurantId: targetRestaurantId)
                 
-                DispatchQueue.main.async { [weak self] in
-                    self?.products = fetchedProducts
-                    self?.isLoading = false
+                await MainActor.run {
+                    self.products = fetchedProducts
+                    self.isLoading = false
                 }
             } catch {
-                DispatchQueue.main.async { [weak self] in
-                    self?.error = error.localizedDescription
-                    self?.isLoading = false
+                await MainActor.run {
+                    self.error = error.localizedDescription
+                    self.isLoading = false
                 }
             }
         }
@@ -52,88 +54,123 @@ class ProductService: ObservableObject {
     /// Add a new product
     /// - Parameters:
     ///   - product: The product to add
-    ///   - completion: Completion handler
-    func addProduct(product: Product, completion: @escaping (Result<Product, Error>) -> Void) {
-        isLoading = true
-        error = nil
+    func addProduct(product: Product, image: UIImage? = nil) async throws -> Product {
+        await MainActor.run {
+            isLoading = true
+            error = nil
+        }
         
-        Task {
-            do {
-                let newProduct = try await productApi.createProduct(product: product, image: product.productPhoto)
-                
-                DispatchQueue.main.async { [weak self] in
-                    self?.isLoading = false
-                    
-                    // Add to local products
-                    self?.products.append(newProduct)
-                    
-                    completion(.success(newProduct))
-                }
-            } catch {
-                DispatchQueue.main.async { [weak self] in
-                    self?.isLoading = false
-                    self?.error = error.localizedDescription
-                    completion(.failure(error))
-                }
+        do {
+            let newProduct = try await productApi.createProductWithMultipart(product: product, image: image)
+            
+            // Update the products list
+            await refreshProducts()
+            
+            await MainActor.run {
+                isLoading = false
             }
+            return newProduct
+        } catch {
+            await MainActor.run {
+                isLoading = false
+                self.error = error.localizedDescription
+            }
+            throw error
         }
     }
     
-    /// Update an existing product
+    /// Update a product
     /// - Parameters:
-    ///   - product: The product to update
-    ///   - completion: Completion handler
-    func updateProduct(product: Product, completion: @escaping (Result<Product, Error>) -> Void) {
-        isLoading = true
-        error = nil
+    ///   - productId: The product ID
+    ///   - product: The updated product
+    ///   - image: The new product image (if changed)
+    /// - Returns: The updated product
+    func updateProduct(productId: String, product: Product, image: UIImage? = nil) async throws -> Product {
+        await MainActor.run {
+            isLoading = true
+            error = nil
+        }
         
-        // In a real implementation, call an API to update
-        // For now, simulate by updating local array
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self else { return }
+        DebugLogger.shared.log("Starting to update product: \(productId)", category: .network)
+        
+        // Only include the image in the API call if it was actually changed
+        let imageToUse = image
+        
+        do {
+            // Update the product using the API
+            let updatedProduct = try await productApi.updateProduct(
+                productId: productId,
+                product: product,
+                image: imageToUse
+            )
             
-            // Find and update product in array
-            if let index = self.products.firstIndex(where: { $0.id == product.id }) {
-                self.products[index] = product
-                self.isLoading = false
-                completion(.success(product))
-            } else {
-                self.isLoading = false
-                let error = NSError(domain: "ProductService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Product not found"])
-                self.error = error.localizedDescription
-                completion(.failure(error))
+            // Clear the image cache for this product to ensure fresh images are displayed
+            ProductApi.shared.clearProductImageCache(productId: productId)
+            
+            // Refresh the product list to include the updated product
+            await refreshProducts()
+            
+            await MainActor.run {
+                isLoading = false
             }
+            
+            return updatedProduct
+        } catch {
+            DebugLogger.shared.log("Error updating product: \(error.localizedDescription)", category: .error)
+            
+            await MainActor.run {
+                self.error = "Failed to update product: \(error.localizedDescription)"
+                isLoading = false
+            }
+            
+            throw error
         }
     }
     
     /// Delete a product
-    /// - Parameters:
-    ///   - productId: The product ID to delete
-    ///   - completion: Completion handler
-    func deleteProduct(productId: String, completion: @escaping (Bool) -> Void) {
-        isLoading = true
-        error = nil
+    /// - Parameter productId: ID of the product to delete
+    /// - Returns: Success status
+    func deleteProduct(productId: String) async throws -> Bool {
+        await MainActor.run {
+            isLoading = true
+            error = nil
+        }
         
-        Task {
-            do {
-                let success = try await productApi.deleteProduct(productId: productId)
+        do {
+            let success = try await productApi.deleteProduct(productId: productId)
+            
+            if success {
+                // Update the products list on success
+                await refreshProducts()
+            }
+            
+            await MainActor.run {
+                isLoading = false
+            }
+            return success
+        } catch {
+            await MainActor.run {
+                isLoading = false
+                self.error = error.localizedDescription
+            }
+            throw error
+        }
+    }
+    
+    /// Refresh the products list
+    private func refreshProducts() async {
+        do {
+            let targetRestaurantId = DataController.shared.restaurant.id
+            if !targetRestaurantId.isEmpty {
+                let refreshedProducts = try await productApi.getAllProducts(restaurantId: targetRestaurantId)
                 
-                DispatchQueue.main.async { [weak self] in
-                    self?.isLoading = false
-                    
-                    if success {
-                        // Remove from local products
-                        self?.products.removeAll { $0.id == productId }
-                    }
-                    
-                    completion(success)
+                await MainActor.run {
+                    self.products = refreshedProducts
                 }
-            } catch {
-                DispatchQueue.main.async { [weak self] in
-                    self?.isLoading = false
-                    self?.error = error.localizedDescription
-                    completion(false)
-                }
+            }
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
             }
         }
     }
@@ -144,27 +181,30 @@ class ProductService: ObservableObject {
     ///   - isAvailable: New availability state
     ///   - completion: Completion handler
     func toggleProductAvailability(productId: String, isAvailable: Bool, completion: @escaping (Result<Bool, Error>) -> Void) {
-        isLoading = true
-        error = nil
-        
-        // In a real implementation, call an API to update
-        // For now, just update locally
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self = self else { return }
+        Task {
+            await MainActor.run {
+                isLoading = true
+                error = nil
+            }
             
-            // Find and update product in array
-            if let index = self.products.firstIndex(where: { $0.id == productId }) {
-                var updatedProduct = self.products[index]
-                updatedProduct.isAvailable = isAvailable
-                self.products[index] = updatedProduct
-                
-                self.isLoading = false
-                completion(.success(true))
-            } else {
-                self.isLoading = false
-                let error = NSError(domain: "ProductService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Product not found"])
-                self.error = error.localizedDescription
-                completion(.failure(error))
+            // Short delay to simulate network call
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
+            await MainActor.run {
+                // Find and update product in array
+                if let index = self.products.firstIndex(where: { $0.id == productId }) {
+                    var updatedProduct = self.products[index]
+                    updatedProduct.isAvailable = isAvailable
+                    self.products[index] = updatedProduct
+                    
+                    self.isLoading = false
+                    completion(.success(true))
+                } else {
+                    self.isLoading = false
+                    let error = NSError(domain: "ProductService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Product not found"])
+                    self.error = error.localizedDescription
+                    completion(.failure(error))
+                }
             }
         }
     }

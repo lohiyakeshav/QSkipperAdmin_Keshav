@@ -1,0 +1,11 @@
+/* 
+  InfoPlist.strings
+  QSkipperAdmin
+
+  Created for localization
+*/
+
+NSPhotoLibraryUsageDescription = "This app requires access to your photo library to upload product images.";
+NSCameraUsageDescription = "This app requires access to your camera to take product photos.";
+CFBundleDisplayName = "QSkipper Admin";
+CFBundleName = "QSkipper Admin"; 

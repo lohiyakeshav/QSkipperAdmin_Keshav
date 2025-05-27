@@ -4,6 +4,7 @@ import PhotosUI
 struct ProductFormView: View {
     // Environment
     @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var productService: ProductService
     @Environment(\.presentationMode) private var presentationMode
     @Binding var isPresented: Bool
     
@@ -22,6 +23,9 @@ struct ProductFormView: View {
     @State private var showImagePicker = false
     @State private var isLoading = false
     @State private var errorMessage: String? = nil
+    @State private var showSuccessAlert = false
+    @State private var successMessage = ""
+    @State private var imageChanged = false
     
     var body: some View {
         NavigationView {
@@ -48,35 +52,36 @@ struct ProductFormView: View {
                 }
                 
                 Section(header: Text("Product Image")) {
-                    Button(action: {
-                        showImagePicker = true
-                    }) {
-                        HStack {
-                            Text("Select Image")
-                            Spacer()
-                            if let image = selectedImage {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 80, height: 80)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            } else {
-                                Image(systemName: "photo")
-                                    .foregroundColor(Color(AppColors.mediumGray))
-                                    .frame(width: 80, height: 80)
-                                    .background(Color(AppColors.lightGray))
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
+                    HStack {
+                        Spacer()
+                        if let image = selectedImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 200, height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color(AppColors.primaryGreen), lineWidth: imageChanged ? 2 : 0)
+                                )
+                        } else {
+                            Rectangle()
+                                .fill(Color(AppColors.lightGray))
+                                .frame(width: 200, height: 200)
+                                .cornerRadius(10)
+                                .overlay(
+                                    Image(systemName: "photo")
+                                        .foregroundColor(Color(AppColors.mediumGray))
+                                        .font(.system(size: 40))
+                                )
                         }
+                        Spacer()
                     }
-                }
-                
-                Section(header: Text("Additional Settings")) {
-                    Toggle("Available", isOn: $isAvailable)
+                    .padding(.vertical, 10)
                     
-                    Toggle("Featured Item", isOn: $isFeatured)
-                    
-                    Stepper("Extra Prep Time: \(extraTime) mins", value: $extraTime, in: 0...60, step: 5)
+                    ImagePicker(image: $selectedImage, onImageSelected: {
+                        imageChanged = true
+                    })
                 }
                 
                 Section {
@@ -116,7 +121,16 @@ struct ProductFormView: View {
                 }
             }
             .sheet(isPresented: $showImagePicker) {
-                ImagePicker(image: $selectedImage)
+                ImagePicker(image: $selectedImage, onImageSelected: {
+                    imageChanged = true
+                })
+            }
+            .alert("Success", isPresented: $showSuccessAlert) {
+                Button("OK", role: .cancel) {
+                    isPresented = false
+                }
+            } message: {
+                Text(successMessage)
             }
             .onAppear {
                 // Populate form if editing existing product
@@ -140,8 +154,31 @@ struct ProductFormView: View {
             return
         }
         
-        guard let restaurantId = authService.currentUser?.restaurantId else {
-            errorMessage = "Restaurant ID not found"
+        // Get restaurant ID using multiple fallback options
+        let restaurantId: String
+        
+        // Option 1: Try to get from UserDefaults (most reliable)
+        if let storedRestaurantId = UserDefaults.standard.string(forKey: "restaurant_id"), !storedRestaurantId.isEmpty {
+            restaurantId = storedRestaurantId
+            DebugLogger.shared.log("Using restaurant ID from UserDefaults: \(restaurantId)", category: .network)
+        }
+        // Option 2: Try to get from authService.currentUser
+        else if let userRestaurantId = authService.currentUser?.restaurantId, !userRestaurantId.isEmpty {
+            restaurantId = userRestaurantId
+            DebugLogger.shared.log("Using restaurant ID from current user: \(restaurantId)", category: .network)
+        }
+        // Option 3: Try to get from DataController
+        else if !DataController.shared.restaurant.id.isEmpty {
+            restaurantId = DataController.shared.restaurant.id
+            DebugLogger.shared.log("Using restaurant ID from DataController: \(restaurantId)", category: .network)
+        }
+        // Option 4: Use user ID as a fallback (least preferred)
+        else if let userId = authService.getUserId() {
+            restaurantId = userId
+            DebugLogger.shared.log("Using user ID as fallback for restaurant ID: \(restaurantId)", category: .network)
+        }
+        else {
+            errorMessage = "Restaurant ID not found. Please try logging out and logging in again."
             return
         }
         
@@ -160,47 +197,47 @@ struct ProductFormView: View {
             productPhoto: selectedImage
         )
         
-        isLoading = true
+        // Update isLoading on the main thread
+        Task { @MainActor in
+            isLoading = true
+        }
         
         Task {
             do {
-                // Try multipart method first (better for handling images)
-                if product == nil {
-                    // Add new product
-                    _ = try await ProductApi.shared.createProductWithMultipart(product: updatedProduct, image: selectedImage)
-                } else {
+                if let existingProduct = product {
                     // Update existing product
-                    _ = try await ProductApi.shared.createProductWithMultipart(product: updatedProduct, image: selectedImage)
-                }
-                
-                // Success
-                await MainActor.run {
-                    isLoading = false
-                    errorMessage = nil
-                    isPresented = false
-                }
-            } catch {
-                // If multipart fails, try standard method as fallback
-                do {
-                    if product == nil {
-                        // Add new product
-                        _ = try await ProductApi.shared.createProduct(product: updatedProduct, image: selectedImage)
-                    } else {
-                        // Update existing product
-                        _ = try await ProductApi.shared.createProduct(product: updatedProduct, image: selectedImage)
-                    }
+                    _ = try await productService.updateProduct(
+                        productId: existingProduct.id,
+                        product: updatedProduct,
+                        // Only pass image if it was changed
+                        image: imageChanged ? selectedImage : nil
+                    )
                     
-                    // Success
+                    // Show success alert
+                    await MainActor.run {
+                        isLoading = false
+                        errorMessage = nil
+                        successMessage = "Product updated successfully"
+                        showSuccessAlert = true
+                    }
+                } else {
+                    // Add new product
+                    _ = try await productService.addProduct(
+                        product: updatedProduct,
+                        image: selectedImage
+                    )
+                    
+                    // Close the form on success
                     await MainActor.run {
                         isLoading = false
                         errorMessage = nil
                         isPresented = false
                     }
-                } catch {
-                    await MainActor.run {
-                        isLoading = false
-                        errorMessage = error.localizedDescription
-                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = error.localizedDescription
                 }
             }
         }
@@ -211,5 +248,6 @@ struct ProductFormView_Previews: PreviewProvider {
     static var previews: some View {
         ProductFormView(isPresented: .constant(true))
             .environmentObject(AuthService())
+            .environmentObject(ProductService())
     }
 } 

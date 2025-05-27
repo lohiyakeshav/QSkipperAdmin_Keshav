@@ -425,6 +425,155 @@ class APIClient {
         }
     }
     
+    /// Update an existing product
+    /// - Parameters:
+    ///   - product: The product to update
+    ///   - image: Optional product image
+    /// - Returns: Updated product
+    func updateProduct(product: Product, image: UIImage? = nil) async throws -> Product {
+        DebugLogger.shared.log("📡 APIClient: PUT request to \(NetworkManager.baseURL)/update-product/\(product.id)", category: .network)
+        
+        // Create URL and request
+        guard let url = URL(string: "\(NetworkManager.baseURL)/update-product/\(product.id)") else {
+            let error = NSError(domain: "APIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+            DebugLogger.shared.logError(error, tag: "URL_CONSTRUCTION")
+            throw error
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Handle product with or without image
+        var jsonData: Data
+        
+        if let image = image {
+            // Compress image using exact same approach as restaurant images
+            guard let imageData = compressImageToTargetSize(image: image, targetSizeKB: 500, usePNG: false) else {
+                DebugLogger.shared.log("⚠️ Failed to compress image", category: .error)
+                throw NSError(domain: "APIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+            }
+            
+            // With image
+            let base64String = imageData.base64EncodedString()
+            
+            // Create payload dictionary
+            var productDict: [String: Any] = [
+                "product_name": product.name,
+                "restaurant_id": product.restaurantId,
+                "description": product.description,
+                "food_category": product.category,
+                "extraTime": String(product.extraTime),
+                "product_price": String(product.price),
+                "product_photo64Image": base64String
+            ]
+            
+            if !product.id.isEmpty {
+                productDict["_id"] = product.id
+            }
+            
+            jsonData = try JSONSerialization.data(withJSONObject: productDict)
+            DebugLogger.shared.log("📥 Product update with image payload size: \(jsonData.count / 1024)KB", category: .network)
+        } else {
+            // Without image
+            let encoder = JSONEncoder()
+            jsonData = try encoder.encode(product)
+            DebugLogger.shared.log("📥 Product update without image payload size: \(jsonData.count / 1024)KB", category: .network)
+        }
+        
+        request.httpBody = jsonData
+        
+        // Dump shortened request body for debugging
+        if let bodyPreview = String(data: jsonData.prefix(500), encoding: .utf8) {
+            DebugLogger.shared.log("📡 Update request body (preview): \(bodyPreview)...", category: .network)
+        }
+        
+        // Make the request
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // Log the response
+            if let responseString = String(data: data, encoding: .utf8) {
+                DebugLogger.shared.log("📥 Update product response: \(responseString)", category: .network)
+            }
+            
+            // Check status code
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let error = NSError(domain: "APIClient", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed with status \(statusCode)"])
+                DebugLogger.shared.logError(error, tag: "API_ERROR")
+                throw error
+            }
+            
+            // Decode the response
+            let decoder = JSONDecoder()
+            do {
+                let productResponse = try decoder.decode(ProductResponse.self, from: data)
+                if let updatedProduct = productResponse.product {
+                    return updatedProduct
+                } else {
+                    throw NSError(domain: "APIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Updated product not found in response"])
+                }
+            } catch {
+                DebugLogger.shared.log("❌ Decoding error: \(error)", category: .error)
+                throw error
+            }
+        } catch {
+            DebugLogger.shared.logError(error, tag: "NETWORK_REQUEST")
+            throw error
+        }
+    }
+    
+    /// Delete a product
+    /// - Parameter productId: The product ID to delete
+    /// - Returns: Success boolean
+    func deleteProduct(productId: String) async throws -> Bool {
+        DebugLogger.shared.log("📡 APIClient: DELETE request to \(NetworkManager.baseURL)/delete-product/\(productId)", category: .network)
+        
+        // Create URL and request
+        guard let url = URL(string: "\(NetworkManager.baseURL)/delete-product/\(productId)") else {
+            let error = NSError(domain: "APIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+            DebugLogger.shared.logError(error, tag: "URL_CONSTRUCTION")
+            throw error
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        
+        // Make the request
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // Log the response
+            if let responseString = String(data: data, encoding: .utf8) {
+                DebugLogger.shared.log("📥 Delete product response: \(responseString)", category: .network)
+            }
+            
+            // Check status code
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let error = NSError(domain: "APIClient", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed with status \(statusCode)"])
+                DebugLogger.shared.logError(error, tag: "API_ERROR")
+                throw error
+            }
+            
+            // Decode the response
+            let decoder = JSONDecoder()
+            do {
+                let deleteResponse = try decoder.decode(DeleteProductResponse.self, from: data)
+                return deleteResponse.success
+            } catch {
+                DebugLogger.shared.log("❌ Decoding error: \(error)", category: .error)
+                throw error
+            }
+        } catch {
+            DebugLogger.shared.logError(error, tag: "NETWORK_REQUEST")
+            throw error
+        }
+    }
+    
     /// Clear the response cache
     func clearCache() {
         responseCache.removeAll()

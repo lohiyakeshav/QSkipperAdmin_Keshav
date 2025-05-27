@@ -14,171 +14,247 @@ struct ProductDetailView: View {
     @State private var isAvailable = false
     @State private var productImage: UIImage? = nil
     @State private var isLoadingImage = false
+    @State private var isDeleting = false
+    @State private var showSuccessAlert = false
+    @State private var successMessage = ""
+    @State private var hasAppeared = false
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Product image
-                ZStack {
-                    if isLoadingImage {
-                        Rectangle()
-                            .fill(Color(AppColors.lightGray))
-                            .frame(height: 200)
-                            .frame(maxWidth: .infinity)
-                            .overlay(
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle())
-                            )
-                    } else if let image = productImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(height: 200)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                    } else {
-                        Rectangle()
-                            .fill(Color(AppColors.lightGray))
-                            .frame(height: 200)
-                            .frame(maxWidth: .infinity)
-                            .overlay(
-                                Image(systemName: "photo")
+        NavigationView {
+            ZStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Product image with overlay header
+                        ZStack(alignment: .bottom) {
+                            // Image container
+                            if isLoadingImage {
+                                Rectangle()
+                                    .fill(Color(AppColors.lightGray))
+                                    .frame(height: 250)
+                                    .frame(maxWidth: .infinity)
+                                    .overlay(
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle())
+                                            .scaleEffect(1.5)
+                                    )
+                            } else if let image = productImage {
+                                Image(uiImage: image)
                                     .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 60, height: 60)
-                                    .foregroundColor(Color(AppColors.mediumGray))
+                                    .scaledToFill()
+                                    .frame(height: 250)
+                                    .frame(maxWidth: .infinity)
+                                    .clipped()
+                            } else {
+                                Rectangle()
+                                    .fill(Color(AppColors.lightGray))
+                                    .frame(height: 250)
+                                    .frame(maxWidth: .infinity)
+                                    .overlay(
+                                        Image(systemName: "photo")
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 60, height: 60)
+                                            .foregroundColor(Color(AppColors.mediumGray))
+                                    )
+                            }
+                            
+                            // Product name and price overlay
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(product.name)
+                                            .font(AppFonts.title)
+                                            .foregroundColor(.white)
+                                            .shadow(radius: 2)
+                                        
+                                        Text(product.category)
+                                            .font(AppFonts.body)
+                                            .foregroundColor(.white.opacity(0.9))
+                                            .shadow(radius: 2)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Text("₹\(product.price)")
+                                        .font(AppFonts.title)
+                                        .foregroundColor(.white)
+                                        .padding(10)
+                                        .background(Color(AppColors.primaryGreen))
+                                        .cornerRadius(8)
+                                        .shadow(radius: 2)
+                                }
+                            }
+                            .padding(16)
+                            .background(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [Color.black.opacity(0.7), Color.black.opacity(0)]),
+                                    startPoint: .bottom,
+                                    endPoint: .top
+                                )
                             )
-                    }
-                }
-                .onAppear {
-                    loadProductImage()
-                }
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    // Header
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(product.name)
-                                .font(AppFonts.title)
-                                .foregroundColor(Color(AppColors.darkGray))
-                            
-                            Text(product.category)
-                                .font(AppFonts.body)
-                                .foregroundColor(Color(AppColors.mediumGray))
                         }
-                        
-                        Spacer()
-                        
-                        Text("₹\(product.price)")
-                            .font(AppFonts.title)
-                            .foregroundColor(Color(AppColors.primaryGreen))
-                    }
-                    
-                    Divider()
-                    
-                    // Description
-                    Text("Description")
-                        .font(AppFonts.sectionTitle)
-                        .foregroundColor(Color(AppColors.darkGray))
-                    
-                    Text(product.description.isEmpty ? "No description provided" : product.description)
-                        .font(AppFonts.body)
-                        .foregroundColor(Color(AppColors.darkGray))
-                        .padding(.bottom, 8)
-                    
-                    // Additional info
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Status:")
-                                .font(AppFonts.body.bold())
-                            
-                            Text(product.isAvailable ? "Available" : "Unavailable")
-                                .font(AppFonts.body)
-                                .foregroundColor(product.isAvailable ? 
-                                                 Color(AppColors.primaryGreen) : 
-                                                 Color(AppColors.errorRed))
-                        }
-                        
-                        HStack {
-                            Text("Extra Prep Time:")
-                                .font(AppFonts.body.bold())
-                            
-                            Text("\(product.extraTime) minutes")
-                                .font(AppFonts.body)
-                        }
-                        
-                        if product.isFeatured {
-                            HStack {
-                                Image(systemName: "star.fill")
-                                    .foregroundColor(Color.yellow)
-                                
-                                Text("Featured Item")
-                                    .font(AppFonts.body.bold())
-                                    .foregroundColor(Color.yellow)
+                        .onReceive(NotificationCenter.default.publisher(for: .productImageCacheCleared)) { notification in
+                            if let productId = notification.userInfo?["productId"] as? String, 
+                               productId == product.id {
+                                // Force a reload of this product's image
+                                loadProductImage()
                             }
                         }
-                    }
-                    .padding(.vertical, 8)
-                    
-                    Divider()
-                    
-                    // Availability toggle
-                    Toggle("Available for Order", isOn: $isAvailable)
-                        .toggleStyle(SwitchToggleStyle(tint: Color(AppColors.primaryGreen)))
-                        .font(AppFonts.body.bold())
-                        .padding(.vertical, 8)
-                        .onChange(of: isAvailable) { newValue in
-                            updateAvailability(newValue)
-                        }
-                    
-                    // Action buttons
-                    HStack {
-                        Button(action: {
-                            showEditSheet = true
-                        }) {
-                            Text("Edit")
-                                .font(AppFonts.buttonText)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color(AppColors.primaryGreen))
-                                .cornerRadius(10)
+                        .onReceive(NotificationCenter.default.publisher(for: .productUpdated)) { notification in
+                            if let productId = notification.userInfo?["productId"] as? String,
+                               let imageUpdated = notification.userInfo?["imageUpdated"] as? Bool,
+                               productId == product.id && imageUpdated {
+                                // Force a reload of this product's image
+                                loadProductImage()
+                            }
                         }
                         
-                        Button(action: {
-                            isShowingDeleteAlert = true
-                        }) {
-                            Text("Delete")
-                                .font(AppFonts.buttonText)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color(AppColors.errorRed))
-                                .cornerRadius(10)
+                        // Description section
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Description
+                            Group {
+                                Text("Description")
+                                    .font(AppFonts.sectionTitle)
+                                    .foregroundColor(Color(AppColors.darkGray))
+                                
+                                Text(product.description.isEmpty ? "No description provided" : product.description)
+                                    .font(AppFonts.body)
+                                    .foregroundColor(Color(AppColors.darkGray))
+                                    .padding(.bottom, 8)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal)
+                            
+                            Divider()
+                                .padding(.horizontal)
+                            
+                            if product.isFeatured {
+                                HStack {
+                                    Image(systemName: "star.fill")
+                                        .foregroundColor(Color.yellow)
+                                    
+                                    Text("Featured Item")
+                                        .font(AppFonts.body.bold())
+                                        .foregroundColor(Color.yellow)
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                
+                                Divider()
+                                    .padding(.horizontal)
+                            }
+                            
+                            // Action buttons
+                            VStack(spacing: 16) {
+                                Button(action: {
+                                    showEditSheet = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "pencil")
+                                        Text("Update Product")
+                                            .font(AppFonts.buttonText)
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color(AppColors.primaryGreen))
+                                    .cornerRadius(10)
+                                }
+                                
+                                Button(action: {
+                                    isShowingDeleteAlert = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "trash")
+                                        Text("Delete Product")
+                                            .font(AppFonts.buttonText)
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color(AppColors.errorRed))
+                                    .cornerRadius(10)
+                                }
+                            }
+                            .padding()
                         }
+                        .padding(.vertical, 16)
                     }
-                    .padding(.top, 16)
                 }
-                .padding()
+                
+                // Loading overlay for when data is loading
+                if isLoadingImage && !hasAppeared {
+                    Color.black.opacity(0.4)
+                        .edgesIgnoringSafeArea(.all)
+                        .overlay(
+                            VStack {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(1.5)
+                                
+                                Text("Loading product details...")
+                                    .foregroundColor(.white)
+                                    .font(AppFonts.body)
+                                    .padding(.top, 10)
+                            }
+                        )
+                }
+                
+                // Delete overlay
+                if isDeleting {
+                    Color.black.opacity(0.4)
+                        .edgesIgnoringSafeArea(.all)
+                        .overlay(
+                            VStack {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(1.5)
+                                
+                                Text("Deleting...")
+                                    .foregroundColor(.white)
+                                    .font(AppFonts.body)
+                                    .padding(.top, 10)
+                            }
+                        )
+                }
             }
-        }
-        .navigationTitle("Product Details")
-        .sheet(isPresented: $showEditSheet) {
-            ProductFormView(isPresented: $showEditSheet, product: product)
-                .environmentObject(productService)
-        }
-        .alert(isPresented: $isShowingDeleteAlert) {
-            Alert(
-                title: Text("Delete Product"),
-                message: Text("Are you sure you want to delete this product? This action cannot be undone."),
-                primaryButton: .destructive(Text("Delete")) {
-                    deleteProduct()
-                },
-                secondaryButton: .cancel()
-            )
-        }
-        .onAppear {
-            isAvailable = product.isAvailable
+            .navigationTitle("Product Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                }
+            }
+            .sheet(isPresented: $showEditSheet) {
+                ProductFormView(isPresented: $showEditSheet, product: product)
+                    .environmentObject(productService)
+            }
+            .alert(isPresented: $isShowingDeleteAlert) {
+                Alert(
+                    title: Text("Delete Product"),
+                    message: Text("Are you sure you want to delete this product? This action cannot be undone."),
+                    primaryButton: .destructive(Text("Delete")) {
+                        deleteProduct()
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            .alert("Success", isPresented: $showSuccessAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(successMessage)
+            }
+            .onAppear {
+                isAvailable = product.isAvailable
+                loadProductImage()
+            }
+            .onChange(of: isLoadingImage) { newValue in
+                if !newValue && !hasAppeared {
+                    hasAppeared = true
+                }
+            }
         }
     }
     
@@ -189,9 +265,15 @@ struct ProductDetailView: View {
         
         Task {
             do {
-                // Update the product using the API
-                let _ = try await ProductApi.shared.createProduct(product: updatedProduct)
-                print("Updated availability to: \(available)")
+                // Update the product using the service
+                _ = try await productService.updateProduct(
+                    productId: product.id,
+                    product: updatedProduct
+                )
+                await MainActor.run {
+                    successMessage = "Product availability updated successfully"
+                    showSuccessAlert = true
+                }
             } catch {
                 // Revert the toggle on error
                 await MainActor.run {
@@ -203,19 +285,26 @@ struct ProductDetailView: View {
     }
     
     private func deleteProduct() {
+        isDeleting = true
+        
         Task {
             do {
-                // Delete the product using the API
-                let success = try await ProductApi.shared.deleteProduct(productId: product.id)
+                // Delete the product using the service
+                let success = try await productService.deleteProduct(productId: product.id)
                 
-                if success {
-                    // Go back to product list on main thread
-                    await MainActor.run {
+                await MainActor.run {
+                    isDeleting = false
+                    
+                    if success {
+                        // Go back to product list
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
             } catch {
-                print("Failed to delete product: \(error.localizedDescription)")
+                await MainActor.run {
+                    isDeleting = false
+                    print("Failed to delete product: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -223,8 +312,16 @@ struct ProductDetailView: View {
     private func loadProductImage() {
         isLoadingImage = true
         
-        // Use the correct endpoint for product photos
-        let imageUrlString = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)"
+        // First check if product already has a photo in memory
+        if let photoFromProduct = product.productPhoto {
+            self.productImage = photoFromProduct
+            self.isLoadingImage = false
+            return
+        }
+        
+        // Use the correct endpoint for product photos with timestamp to prevent caching
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let imageUrlString = "\(NetworkManager.baseURL)/get_product_photo/\(product.id)?v=\(timestamp)"
         
         guard let url = URL(string: imageUrlString) else {
             isLoadingImage = false
@@ -242,10 +339,6 @@ struct ProductDetailView: View {
             } catch {
                 print("Error loading product image: \(error.localizedDescription)")
                 await MainActor.run {
-                    // If there's a product photo in memory, use that
-                    if let photoFromProduct = product.productPhoto {
-                        self.productImage = photoFromProduct
-                    }
                     self.isLoadingImage = false
                 }
             }
@@ -269,6 +362,8 @@ struct ProductDetailView_Previews: PreviewProvider {
                 isFeatured: true
             ))
             .environmentObject(ProductService())
+            .environmentObject(AuthService())
+            .environmentObject(DataController.shared)
         }
     }
 } 

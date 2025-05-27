@@ -123,7 +123,9 @@ class NetworkManager {
             "/delete-product/": "/delete-product/",
             "/get-order/": "/get-order/",
             "/order-complete/": "/order-complete/",
-            "/upload-image": "/upload-image"
+            "/upload-image": "/upload-image",
+            "/update-restaurant": "/update-restaurant",
+            "/delete-restaurant/": "/delete-restaurant/"
         ]
         
         // Check if there's a direct mapping for the endpoint

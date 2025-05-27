@@ -119,7 +119,7 @@ struct OrderDetailsView: View {
                 HStack(spacing: 12) {
                     // Product image or placeholder
                     if let imageUrlString = product.imageUrl,
-                       let imageUrl = URL(string: imageUrlString) {
+                       let imageUrl = URL(string: "\(imageUrlString)?v=\(Int(Date().timeIntervalSince1970))") {
                         AsyncImage(url: imageUrl) { phase in
                             switch phase {
                             case .empty:
