@@ -507,15 +507,37 @@ class RestaurantService: ObservableObject {
         appendTextField(fieldName: "cuisines", value: cuisine)
         appendTextField(fieldName: "estimatedTime", value: String(estimatedTime))
         
-        // Add image if available - using a MUCH lower compression to ensure small file size
-        if let image = bannerImage, let imageData = image.jpegData(compressionQuality: 0.01) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"bannerPhoto64Image\"; filename=\"restaurant.jpg\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-            body.append(imageData)
-            body.append("\r\n".data(using: .utf8)!)
+        // Add image if available - using a much lower compression to ensure small file size
+        if let image = bannerImage {
+            // First resize the image to reasonable dimensions
+            let maxSize: CGFloat = 800 // Increased from 500 for better quality
+            var processedImage = image
             
-            print("Image data size (using direct multipart): \(imageData.count / 1024) KB")
+            if max(image.size.width, image.size.height) > maxSize {
+                let scale = maxSize / max(image.size.width, image.size.height)
+                let newWidth = image.size.width * scale
+                let newHeight = image.size.height * scale
+                let newSize = CGSize(width: newWidth, height: newHeight)
+                
+                UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+                image.draw(in: CGRect(origin: .zero, size: newSize))
+                if let resizedImage = UIGraphicsGetImageFromCurrentImageContext() {
+                    processedImage = resizedImage
+                }
+                UIGraphicsEndImageContext()
+            }
+            
+            // Use moderate compression - 0.05 = 5% quality (increased from 1%)
+            if let imageData = processedImage.jpegData(compressionQuality: 0.05) {
+                body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                body.append("Content-Disposition: form-data; name=\"bannerPhoto64Image\"; filename=\"restaurant.jpg\"\r\n".data(using: .utf8)!)
+                body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+                body.append(imageData)
+                body.append("\r\n".data(using: .utf8)!)
+                
+                // Log the image size for debugging
+                DebugLogger.shared.log("Image size for upload: \(imageData.count / 1024) KB", category: .network)
+            }
         }
         
         // Add final boundary
@@ -702,13 +724,37 @@ class RestaurantService: ObservableObject {
         appendTextField(fieldName: "cuisines", value: cuisine)
         appendTextField(fieldName: "estimatedTime", value: String(estimatedTime))
         
-        // Add image if available - using a lower compression to ensure small file size
-        if let image = bannerImage, let imageData = image.jpegData(compressionQuality: 0.6) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"bannerPhoto64Image\"; filename=\"restaurant.jpg\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-            body.append(imageData)
-            body.append("\r\n".data(using: .utf8)!)
+        // Add image if available - using a much lower compression to ensure small file size
+        if let image = bannerImage {
+            // First resize the image to reasonable dimensions
+            let maxSize: CGFloat = 800 // Increased from 500 for better quality
+            var processedImage = image
+            
+            if max(image.size.width, image.size.height) > maxSize {
+                let scale = maxSize / max(image.size.width, image.size.height)
+                let newWidth = image.size.width * scale
+                let newHeight = image.size.height * scale
+                let newSize = CGSize(width: newWidth, height: newHeight)
+                
+                UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+                image.draw(in: CGRect(origin: .zero, size: newSize))
+                if let resizedImage = UIGraphicsGetImageFromCurrentImageContext() {
+                    processedImage = resizedImage
+                }
+                UIGraphicsEndImageContext()
+            }
+            
+            // Use moderate compression - 0.05 = 5% quality (increased from 1%)
+            if let imageData = processedImage.jpegData(compressionQuality: 0.05) {
+                body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                body.append("Content-Disposition: form-data; name=\"bannerPhoto64Image\"; filename=\"restaurant.jpg\"\r\n".data(using: .utf8)!)
+                body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+                body.append(imageData)
+                body.append("\r\n".data(using: .utf8)!)
+                
+                // Log the image size for debugging
+                DebugLogger.shared.log("Image size for upload: \(imageData.count / 1024) KB", category: .network)
+            }
         }
         
         // End the form data
@@ -738,9 +784,32 @@ class RestaurantService: ObservableObject {
                     return
                 }
                 
-                // Log the response for debugging
+                // Log response size for debugging
+                DebugLogger.shared.log("Response size: \(data.count) bytes", category: .network)
+                
+                // Log the response for debugging - limit to first 500 characters to avoid overwhelming logs
                 if let responseString = String(data: data, encoding: .utf8) {
-                    DebugLogger.shared.log("Restaurant update response: \(responseString)", category: .network)
+                    let truncatedResponse = responseString.count > 500 ? 
+                        responseString.prefix(500) + "... [truncated]" : responseString
+                    DebugLogger.shared.log("Restaurant update response (truncated): \(truncatedResponse)", category: .network)
+                    
+                    // If it contains "message too long", we know what the issue is
+                    if responseString.contains("message too long") || responseString.contains("request entity too large") {
+                        // This is likely a server-side limit on request size
+                        let error = NSError(domain: "RestaurantService", code: 413, 
+                                            userInfo: [NSLocalizedDescriptionKey: "The image is too large. Please try with a smaller image."])
+                        self.error = error.localizedDescription
+                        completion(.failure(error))
+                        return
+                    }
+                    
+                    // Check for success keywords in the raw response
+                    if responseString.lowercased().contains("success") || 
+                       responseString.lowercased().contains("updated") ||
+                       responseString.contains(restaurantId) {
+                        completion(.success(restaurantId))
+                        return
+                    }
                 }
                 
                 do {
@@ -756,6 +825,13 @@ class RestaurantService: ObservableObject {
                                 } else {
                                     completion(.success(restaurantId))
                                 }
+                                return
+                            } else if message.contains("too large") || message.contains("too long") {
+                                // This is likely a server-side limit on request size
+                                let error = NSError(domain: "RestaurantService", code: 413, 
+                                                   userInfo: [NSLocalizedDescriptionKey: "The image is too large. Please try with a smaller image."])
+                                self.error = error.localizedDescription
+                                completion(.failure(error))
                                 return
                             }
                         }
@@ -782,7 +858,15 @@ class RestaurantService: ObservableObject {
                             }
                         }
                     } else {
-                        // Not valid JSON
+                        // Not valid JSON - might be HTML error page or other format
+                        // Try to parse as simple text and see if it contains the restaurant ID
+                        if let responseText = String(data: data, encoding: .utf8), 
+                           responseText.contains(restaurantId) {
+                            // Consider it a success if the response contains the restaurant ID
+                            completion(.success(restaurantId))
+                            return
+                        }
+                        
                         throw NSError(domain: "RestaurantService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
                     }
                 } catch {

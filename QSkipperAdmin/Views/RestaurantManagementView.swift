@@ -32,8 +32,8 @@ struct RestaurantManagementView: View {
     
     // State
     @State private var restaurantName: String = ""
-    @State private var estimatedTime: String = "30"
-    @State private var selectedCuisine: String = "North Indian"
+    @State private var estimatedTime: String = ""
+    @State private var selectedCuisine: String = ""
     @State private var restaurantImage: UIImage? = nil
     @State private var isImagePickerShown = false
     @State private var isRegistered: Bool = true // Default to true, will be updated in onAppear
@@ -116,29 +116,35 @@ struct RestaurantManagementView: View {
             return Text("")
         })
         .onAppear {
-            loadRestaurantData()
+            // First check registration status
             checkRegistrationStatus()
             
-            // Force attempt to load restaurant image - try both user ID and restaurant ID
-            if let userId = authService.getUserId() {
-                RestaurantService.shared.fetchRestaurantImage(restaurantId: userId) { image in
-                    if let image = image {
-                        DispatchQueue.main.async {
-                            self.restaurantImage = image
-                            DebugLogger.shared.log("Successfully loaded restaurant image from user ID", category: .network, tag: "RESTAURANT_MANAGEMENT")
+            // Then load restaurant data (which will only load if registered)
+            loadRestaurantData()
+            
+            // Only attempt to load restaurant image if registered
+            if isRegistered {
+                // Force attempt to load restaurant image - try both user ID and restaurant ID
+                if let userId = authService.getUserId() {
+                    RestaurantService.shared.fetchRestaurantImage(restaurantId: userId) { image in
+                        if let image = image {
+                            DispatchQueue.main.async {
+                                self.restaurantImage = image
+                                DebugLogger.shared.log("Successfully loaded restaurant image from user ID", category: .network, tag: "RESTAURANT_MANAGEMENT")
+                            }
                         }
                     }
                 }
-            }
-            
-            // Also try with restaurant ID if different
-            if let restaurantId = UserDefaults.standard.string(forKey: "restaurant_id"), 
-               restaurantId != authService.getUserId() {
-                RestaurantService.shared.fetchRestaurantImage(restaurantId: restaurantId) { image in
-                    if let image = image {
-                        DispatchQueue.main.async {
-                            self.restaurantImage = image
-                            DebugLogger.shared.log("Successfully loaded restaurant image from restaurant ID", category: .network, tag: "RESTAURANT_MANAGEMENT")
+                
+                // Also try with restaurant ID if different
+                if let restaurantId = UserDefaults.standard.string(forKey: "restaurant_id"), 
+                   restaurantId != authService.getUserId() {
+                    RestaurantService.shared.fetchRestaurantImage(restaurantId: restaurantId) { image in
+                        if let image = image {
+                            DispatchQueue.main.async {
+                                self.restaurantImage = image
+                                DebugLogger.shared.log("Successfully loaded restaurant image from restaurant ID", category: .network, tag: "RESTAURANT_MANAGEMENT")
+                            }
                         }
                     }
                 }
@@ -315,7 +321,36 @@ struct RestaurantManagementView: View {
     }
     
     private func loadRestaurantData() {
-        // Load existing restaurant data if available
+        // First check if restaurant is registered
+        let isRestaurantRegistered = UserDefaults.standard.bool(forKey: "is_restaurant_registered")
+        
+        // If not registered, ensure all fields are empty and return early
+        if !isRestaurantRegistered {
+            restaurantName = ""
+            estimatedTime = ""
+            selectedCuisine = ""
+            restaurantImage = nil
+            return
+        }
+        
+        // Check if we have values in the current user profile first
+        if let currentUser = authService.currentUser {
+            // Use current user profile values
+            restaurantName = currentUser.restaurantName
+            
+            // Only set these if they're not empty
+            if currentUser.estimatedTime > 0 {
+                estimatedTime = String(currentUser.estimatedTime)
+            }
+            
+            if !currentUser.cuisine.isEmpty {
+                selectedCuisine = currentUser.cuisine
+            }
+            
+            DebugLogger.shared.log("Loaded restaurant data from user profile - Name: \(currentUser.restaurantName), Time: \(currentUser.estimatedTime), Cuisine: \(currentUser.cuisine)", category: .app)
+        }
+        
+        // Load existing restaurant data from DataController
         if !dataController.restaurant.name.isEmpty {
             restaurantName = dataController.restaurant.name
         }
@@ -332,7 +367,7 @@ struct RestaurantManagementView: View {
             }
         }
         
-        // Load restaurant data from UserDefaults
+        // Finally, load restaurant data from UserDefaults (overrides other sources if available)
         if let restaurantDataEncoded = UserDefaults.standard.data(forKey: "restaurant_data"),
            let restaurantData = try? JSONSerialization.jsonObject(with: restaurantDataEncoded, options: []) as? [String: Any] {
             
@@ -347,12 +382,39 @@ struct RestaurantManagementView: View {
             if let cuisine = restaurantData["cuisine"] as? String, !cuisine.isEmpty {
                 selectedCuisine = cuisine
             }
+            
+            DebugLogger.shared.log("Loaded restaurant data from UserDefaults - Name: \(restaurantData["name"] as? String ?? ""), Time: \(restaurantData["estimatedTime"] as? Int ?? 0), Cuisine: \(restaurantData["cuisine"] as? String ?? "")", category: .app)
+        }
+        
+        // If still no cuisine value, try to load from raw data
+        if selectedCuisine.isEmpty {
+            if let rawDataEncoded = UserDefaults.standard.data(forKey: "restaurant_raw_data"),
+               let rawData = try? JSONSerialization.jsonObject(with: rawDataEncoded, options: []) as? [String: Any] {
+                
+                if let cuisine = rawData["resturantCusine"] as? String, !cuisine.isEmpty {
+                    selectedCuisine = cuisine
+                    DebugLogger.shared.log("Loaded cuisine from raw data: \(cuisine)", category: .app)
+                }
+                
+                if estimatedTime.isEmpty, let time = rawData["resturantEstimateTime"] as? Int {
+                    estimatedTime = String(time)
+                    DebugLogger.shared.log("Loaded estimated time from raw data: \(time)", category: .app)
+                }
+            }
         }
     }
     
     private func checkRegistrationStatus() {
         // Check if restaurant is registered
         isRegistered = UserDefaults.standard.bool(forKey: "is_restaurant_registered")
+        
+        // If not registered, ensure all fields are empty
+        if !isRegistered {
+            restaurantName = ""
+            estimatedTime = ""
+            selectedCuisine = ""
+            restaurantImage = nil
+        }
     }
     
     private func submitRestaurantProfile() {
@@ -388,7 +450,8 @@ struct RestaurantManagementView: View {
             return false
         }
         
-        if restaurantImage == nil {
+        // For new registrations, require an image
+        if !isRegistered && restaurantImage == nil {
             showAlert(message: "Please select a banner image")
             return false
         }
@@ -538,10 +601,10 @@ struct RestaurantManagementView: View {
             estimatedTime: Int(estimatedTime) ?? 30,
             bannerImage: restaurantImage
         ) { result in
-            self.isSubmitting = false
-            
             switch result {
             case .success(let updatedRestaurantId):
+                self.isSubmitting = false
+                
                 // Update restaurant data in UserDefaults
                 let restaurantData: [String: Any] = [
                     "id": updatedRestaurantId,
@@ -560,6 +623,63 @@ struct RestaurantManagementView: View {
                 self.dataController.restaurant.name = self.restaurantName
                 
                 self.showAlert(message: "Restaurant updated successfully")
+                
+            case .failure(let error):
+                // Check if the error is related to the image size
+                if error.localizedDescription.contains("too large") || error.localizedDescription.contains("too long") {
+                    // Try updating without the image
+                    DebugLogger.shared.log("First update attempt failed due to image size. Trying without image...", category: .network)
+                    
+                    self.tryUpdateWithoutImage(userId: userId, restaurantId: restaurantId)
+                } else {
+                    self.isSubmitting = false
+                    self.showAlert(message: "Failed to update restaurant: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    // Fallback method to update restaurant without image
+    private func tryUpdateWithoutImage(userId: String, restaurantId: String) {
+        // Create a restaurant with just the text fields
+        let restaurant = Restaurant(
+            id: restaurantId,
+            restaurantId: userId,
+            restaurantName: restaurantName,
+            cuisine: selectedCuisine,
+            estimatedTime: Int(estimatedTime) ?? 30,
+            bannerPhoto: nil // Don't include the image
+        )
+        
+        // Use the updateRestaurant method instead of multipart
+        restaurantService.updateRestaurant(restaurant: restaurant) { result in
+            self.isSubmitting = false
+            
+            switch result {
+            case .success(let updatedRestaurant):
+                // Update restaurant data in UserDefaults
+                let restaurantData: [String: Any] = [
+                    "id": updatedRestaurant.id,
+                    "name": self.restaurantName,
+                    "estimatedTime": Int(self.estimatedTime) ?? 30,
+                    "cuisine": self.selectedCuisine,
+                    "isRegistered": true
+                ]
+                
+                if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
+                    UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
+                }
+                
+                // Update the data controller
+                self.dataController.restaurant.id = updatedRestaurant.id
+                self.dataController.restaurant.name = self.restaurantName
+                
+                self.showAlert(message: "Restaurant details updated successfully (without image)")
+                
+                // If we have an image that needs updating, suggest separate image upload
+                if self.restaurantImage != nil {
+                    DebugLogger.shared.log("Text data updated successfully. Image was not included due to size limits.", category: .network)
+                }
                 
             case .failure(let error):
                 self.showAlert(message: "Failed to update restaurant: \(error.localizedDescription)")
@@ -589,10 +709,15 @@ struct RestaurantManagementView: View {
                 case .success(_):
                     // Reset restaurant state but keep the user account
                     self.restaurantName = ""
-                    self.estimatedTime = "30"
-                    self.selectedCuisine = "North Indian"
+                    self.estimatedTime = ""
+                    self.selectedCuisine = ""
                     self.restaurantImage = nil
                     self.isRegistered = false
+                    
+                    // Clear UserDefaults restaurant data
+                    UserDefaults.standard.removeObject(forKey: "restaurant_data")
+                    UserDefaults.standard.set(false, forKey: "is_restaurant_registered")
+                    UserDefaults.standard.removeObject(forKey: "restaurant_id")
                     
                     // Reset restaurant data in DataController
                     self.dataController.restaurant.id = ""
@@ -622,8 +747,6 @@ struct RestaurantManagementView: View {
             }
         }
     }
-    
-
     
     private func showAlert(message: String) {
         alertMessage = message

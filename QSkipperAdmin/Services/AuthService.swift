@@ -587,8 +587,14 @@ class AuthService: ObservableObject {
                     let userId = id
                     let authToken = token
                     
-                    // Check if there are restaurant details in the response
+                    // Extract restaurant details from the response
                     let restaurantId = json["restaurantid"] as? String ?? id
+                    let restaurantName = json["restaurantName"] as? String ?? ""
+                    let estimatedTime = json["resturantEstimateTime"] as? Int ?? 30
+                    let cuisine = json["resturantCusine"] as? String ?? ""
+                    
+                    // Log the extracted values
+                    DebugLogger.shared.log("📋 Restaurant details extracted - ID: \(restaurantId), Name: \(restaurantName), Time: \(estimatedTime), Cuisine: \(cuisine)", category: .auth)
                     
                     // If we have a restaurantId different from the user ID, log it
                     if restaurantId != id {
@@ -621,18 +627,31 @@ class AuthService: ObservableObject {
                             self.currentUser = UserRestaurantProfile(
                                 id: userId,
                                 restaurantId: restaurantId,
-                                restaurantName: json["restaurantName"] as? String ?? "",
-                                estimatedTime: json["resturantEstimateTime"] as? Int ?? 30,
-                                cuisine: json["resturantCusine"] as? String ?? "",
+                                restaurantName: restaurantName,
+                                estimatedTime: estimatedTime,
+                                cuisine: cuisine,
                                 restaurantImage: nil
                             )
-                            DebugLogger.shared.log("👤 Created basic user profile with ID: \(userId) and restaurant ID: \(restaurantId)", category: .auth)
+                            DebugLogger.shared.log("👤 Created basic user profile with ID: \(userId), restaurant ID: \(restaurantId), name: \(restaurantName), time: \(estimatedTime), cuisine: \(cuisine)", category: .auth)
                         }
                         
                         // Save complete restaurant info from login response
                         if let encodedData = try? JSONSerialization.data(withJSONObject: json) {
                             UserDefaults.standard.set(encodedData, forKey: "restaurant_raw_data")
                             DebugLogger.shared.log("Complete restaurant raw data saved to UserDefaults", category: .auth)
+                        }
+                        
+                        // Also save in structured format
+                        let restaurantData: [String: Any] = [
+                            "id": restaurantId,
+                            "name": restaurantName,
+                            "estimatedTime": estimatedTime,
+                            "cuisine": cuisine,
+                            "isRegistered": true
+                        ]
+                        
+                        if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
+                            UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
                         }
                     }
                     
@@ -645,9 +664,9 @@ class AuthService: ObservableObject {
                         id: id,
                         username: nil,
                         restaurantId: restaurantId,
-                        restaurantName: json["restaurantName"] as? String,
-                        estimatedTime: json["resturantEstimateTime"] as? Int,
-                        cuisine: json["resturantCusine"] as? String
+                        restaurantName: restaurantName,
+                        estimatedTime: estimatedTime,
+                        cuisine: cuisine
                     )
                     
                     return userResponse
@@ -719,6 +738,24 @@ class AuthService: ObservableObject {
                                 cuisine: finalCuisine,
                                 restaurantImage: nil
                             )
+                            
+                            // Log the profile creation to verify the values
+                            DebugLogger.shared.log("Created user profile with id: \(finalUserId), restaurantId: \(finalRestaurantId), name: \(finalName), time: \(finalTime), cuisine: \(finalCuisine)", category: .auth)
+                            
+                            // Also save to restaurant_data in UserDefaults
+                            let restaurantData: [String: Any] = [
+                                "id": finalRestaurantId,
+                                "name": finalName,
+                                "estimatedTime": finalTime,
+                                "cuisine": finalCuisine,
+                                "isRegistered": true
+                            ]
+                            
+                            if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
+                                UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
+                                UserDefaults.standard.set(true, forKey: "is_restaurant_registered")
+                                UserDefaults.standard.set(finalRestaurantId, forKey: "restaurant_id")
+                            }
                         }
                     }
                     
@@ -917,6 +954,24 @@ class AuthService: ObservableObject {
                                 cuisine: finalCuisine,
                                 restaurantImage: nil
                             )
+                            
+                            // Log the profile creation to verify the values
+                            DebugLogger.shared.log("Created user profile with id: \(finalUserId), restaurantId: \(finalRestaurantId), name: \(finalName), time: \(finalTime), cuisine: \(finalCuisine)", category: .auth)
+                            
+                            // Also save to restaurant_data in UserDefaults
+                            let restaurantData: [String: Any] = [
+                                "id": finalRestaurantId,
+                                "name": finalName,
+                                "estimatedTime": finalTime,
+                                "cuisine": finalCuisine,
+                                "isRegistered": true
+                            ]
+                            
+                            if let encodedData = try? JSONSerialization.data(withJSONObject: restaurantData) {
+                                UserDefaults.standard.set(encodedData, forKey: "restaurant_data")
+                                UserDefaults.standard.set(true, forKey: "is_restaurant_registered")
+                                UserDefaults.standard.set(finalRestaurantId, forKey: "restaurant_id")
+                            }
                         }
                     }
                     
